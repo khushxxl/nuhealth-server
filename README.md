@@ -1,6 +1,6 @@
 # Lefu WiFi Torre Scale Server
 
-Express.js server for receiving device registration, configuration, and measurement data from Lefu WiFi Torre smart scales.
+server for receiving device registration, configuration, and measurement data from Lefu WiFi Torre smart scales.
 
 ## 🚀 Quick Start (Local Development)
 
