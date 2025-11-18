@@ -152,7 +152,7 @@ You can add custom environment variables in Railway:
 ### Test Device Registration
 
 ```bash
-curl -X POST http://nuhealth-server-production.up.railway.app/devices/claim/lefu/wifi/torre/register \
+curl -X POST http://http://192.168.0.206:8000/devices/claim/lefu/wifi/torre/register \
   -H "Content-Type: application/json" \
   -d '{
     "sn": "lf21FD0001",

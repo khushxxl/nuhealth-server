@@ -6,7 +6,6 @@ const PORT = process.env.PORT || 8000;
 // This allows us to handle malformed JSON gracefully
 app.use(express.text({ type: "*/*", limit: "10mb" }));
 
-// Custom JSON parsing middleware
 app.use((req, res, next) => {
   // Store raw body (express.text() sets req.body as string)
   req.rawBody = (typeof req.body === "string" ? req.body : "") || "";
