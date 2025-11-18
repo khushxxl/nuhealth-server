@@ -2,7 +2,58 @@ const express = require("express");
 const app = express();
 const PORT = process.env.PORT || 8000;
 
-app.use(express.json());
+// Capture raw body as text first, then parse JSON manually
+// This allows us to handle malformed JSON gracefully
+app.use(express.text({ type: "*/*", limit: "10mb" }));
+
+// Custom JSON parsing middleware
+app.use((req, res, next) => {
+  // Store raw body (express.text() sets req.body as string)
+  req.rawBody = (typeof req.body === "string" ? req.body : "") || "";
+
+  // Only try to parse JSON if content-type suggests it or body looks like JSON
+  const contentType = req.headers["content-type"] || "";
+  const isJsonContentType = contentType.includes("application/json");
+  const bodyStr = typeof req.body === "string" ? req.body : "";
+  const looksLikeJson =
+    bodyStr &&
+    (bodyStr.trim().startsWith("{") || bodyStr.trim().startsWith("["));
+
+  if (isJsonContentType || looksLikeJson) {
+    if (!bodyStr || bodyStr.trim() === "") {
+      req.body = {};
+      return next();
+    }
+
+    try {
+      req.body = JSON.parse(bodyStr);
+    } catch (err) {
+      console.log("⚠️  JSON Parse Error - attempting recovery");
+      console.log("Error:", err.message);
+      console.log("Raw body (first 500 chars):", bodyStr.substring(0, 500));
+
+      // Try to extract JSON object from mixed content
+      const jsonMatch = bodyStr.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        try {
+          req.body = JSON.parse(jsonMatch[0]);
+          console.log("✅ Successfully extracted JSON from mixed content");
+        } catch (e) {
+          console.log("⚠️  Could not extract valid JSON, using empty body");
+          req.body = {};
+        }
+      } else {
+        console.log("⚠️  No JSON object found, using empty body");
+        req.body = {};
+      }
+    }
+  } else {
+    // Not JSON content, set empty object
+    req.body = {};
+  }
+
+  next();
+});
 
 // Logging middleware
 app.use((req, res, next) => {
@@ -14,10 +65,38 @@ app.use((req, res, next) => {
   Object.entries(req.headers).forEach(([key, value]) => {
     console.log(`  ${key}: ${value}`);
   });
-  if (req.body && Object.keys(req.body).length > 0) {
-    console.log("\n📥 Request Body:");
-    console.log(JSON.stringify(req.body, null, 2));
+
+  // Log raw body if present
+  if (req.rawBody && req.rawBody.length > 0) {
+    console.log("\n📥 Raw Body:");
+    const rawBodyStr =
+      typeof req.rawBody === "string"
+        ? req.rawBody
+        : req.rawBody.toString("utf8");
+    console.log(`  Length: ${rawBodyStr.length} bytes`);
+    const bodyPreview =
+      rawBodyStr.length > 500
+        ? rawBodyStr.substring(0, 500) + "... (truncated)"
+        : rawBodyStr;
+    console.log(`  Content: ${bodyPreview}`);
+    // Show first 100 chars in hex for debugging
+    if (rawBodyStr.length > 0) {
+      const hexPreview = Buffer.from(
+        rawBodyStr.substring(0, 100),
+        "utf8"
+      ).toString("hex");
+      console.log(`  Hex (first 100): ${hexPreview}`);
+    }
   }
+
+  // Log parsed body if present
+  if (req.body && Object.keys(req.body).length > 0) {
+    console.log("\n📥 Parsed Body:");
+    console.log(JSON.stringify(req.body, null, 2));
+  } else if (req.method === "POST" && !req.rawBody) {
+    console.log("\n📥 Body: (empty or not provided)");
+  }
+
   next();
 });
 
@@ -175,7 +254,27 @@ app.post("/lefu/wifi/torre/record", (req, res) => {
   res.status(200).json(response);
 });
 
-// Catch-all for debugging
+// Error handler middleware - catch any unhandled errors
+app.use((err, req, res, next) => {
+  console.error("❌ Unhandled Server Error:");
+  console.error("Error:", err);
+  console.error("Message:", err.message);
+  console.error("Stack:", err.stack);
+
+  const response = {
+    errorCode: 1,
+    text: err.message || "Internal server error",
+    data: null,
+  };
+
+  console.log("\n📤 Response:");
+  console.log(JSON.stringify(response, null, 2));
+  console.log("=".repeat(80) + "\n");
+
+  res.status(err.status || 500).json(response);
+});
+
+// Catch-all for 404
 app.use((req, res) => {
   console.log(`❌ 404 Not Found: ${req.method} ${req.path}`);
 
