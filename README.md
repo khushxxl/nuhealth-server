@@ -140,6 +140,10 @@ The server uses the following environment variables (Railway sets these automati
 
 - `PORT` - Server port (Railway sets this automatically)
 - `RAILWAY_PUBLIC_DOMAIN` - Your Railway domain (set automatically)
+- `SUPABASE_URL` - Your Supabase project URL (required for data persistence)
+- `SUPABASE_ANON_KEY` - Your Supabase anonymous/public key (required for data persistence)
+- `LEFU_APP_KEY` - Lefu API app key (optional, defaults to provided value)
+- `LEFU_APP_SECRET` - Lefu API app secret (optional, defaults to provided value)
 
 You can add custom environment variables in Railway:
 
@@ -147,30 +151,146 @@ You can add custom environment variables in Railway:
 2. Add any variables you need
 3. They'll be available as `process.env.VARIABLE_NAME`
 
-## 📝 Testing with Postman/curl
+## 🔌 Lefu API Integration
 
-### Test Device Registration
+The server automatically integrates with the Lefu API to fetch detailed body composition data:
+
+1. **Token Management**: Automatically fetches and caches authentication tokens from the Lefu API
+2. **Impedance Processing**: Extracts impedance array from incoming requests and maps it to API parameters
+3. **Body Data Fetching**: Calls the Lefu API to get comprehensive body composition data
+4. **Data Storage**: Saves the fetched body data to Supabase
+
+### How It Works
+
+When a record request is received:
+
+1. The server extracts impedance data and other parameters (age, height, weight, sex, product) from the request
+2. Maps the 10-element impedance array to the correct API parameters:
+   - Array[0]: 20kHz right arm impedance
+   - Array[1]: 100kHz right arm impedance
+   - Array[2]: 20kHz left arm impedance
+   - Array[3]: 100kHz left arm impedance
+   - Array[4]: 20kHz trunk impedance
+   - Array[5]: 100kHz trunk impedance
+   - Array[6]: 20kHz right leg impedance
+   - Array[7]: 100kHz right leg impedance
+   - Array[8]: 20kHz left leg impedance
+   - Array[9]: 100kHz left leg impedance
+3. Fetches authentication token from Lefu API (cached for efficiency)
+4. Calls the body data API endpoint with mapped parameters
+5. Saves the complete body data to Supabase
+
+The server handles multiple request formats and will automatically extract impedance data from various locations in the request body.
+
+## 🗄️ Supabase Database Setup
+
+The server automatically saves measurement records to Supabase. It will:
+
+- Fetch body data from Lefu API if impedance data is available
+- Save records when `code: 200` is received
+- Store complete body composition data
+
+Follow these steps to set up:
+
+### Step 1: Create Supabase Project
+
+1. Go to [supabase.com](https://supabase.com) and create a free account
+2. Create a new project
+3. Wait for the project to be fully provisioned
+
+### Step 2: Create Database Table
+
+1. In your Supabase dashboard, go to **SQL Editor**
+2. Copy and paste the contents of `supabase-migration.sql`
+3. Click **Run** to execute the migration
+4. This creates the `scale_records` table with proper indexes
+
+### Step 3: Get Your Credentials
+
+1. Go to **Settings** → **API** in your Supabase dashboard
+2. Copy your **Project URL** (this is your `SUPABASE_URL`)
+3. Copy your **anon/public** key (this is your `SUPABASE_ANON_KEY`)
+
+### Step 4: Configure Environment Variables
+
+**For Railway:**
+
+1. Go to your Railway project → Settings → Variables
+2. Add `SUPABASE_URL` with your project URL
+3. Add `SUPABASE_ANON_KEY` with your anon key
+4. Redeploy your service
+
+**For Local Development:**
+Create a `.env` file (or export variables):
 
 ```bash
-curl -X POST http://http://192.168.0.206:8000/devices/claim/lefu/wifi/torre/register \
+export SUPABASE_URL="https://your-project.supabase.co"
+export SUPABASE_ANON_KEY="your-anon-key-here"
+```
+
+### Database Schema
+
+The `scale_records` table stores:
+
+- `id` - Auto-incrementing primary key
+- `code` - Response code (200 = success)
+- `msg` - Response message
+- `version` - Device firmware version
+- `error_type` - Error type from device
+- `lefu_body_data` - JSONB array of body measurements
+- `full_data` - Complete JSON payload for reference
+- `created_at` - Timestamp when record was created
+- `updated_at` - Timestamp when record was last updated
+
+### Querying Data
+
+You can query the data in Supabase SQL Editor:
+
+```sql
+-- Get all records
+SELECT * FROM scale_records ORDER BY created_at DESC;
+
+-- Get records with specific body parameter
+SELECT * FROM scale_records
+WHERE lefu_body_data @> '[{"bodyParamKey": "ppWeightKg"}]';
+
+-- Get latest weight measurements
+SELECT
+  created_at,
+  full_data->'data'->'lefuBodyData'->0->>'currentValue' as weight
+FROM scale_records
+WHERE code = 200
+ORDER BY created_at DESC;
+```
+
+## 📝 Testing with Postman/curl
+
+### Test Device Registration$$
+
+```bash$$
+curl -X POST https://nuhealth-server-production.up.railway.app/devices/claim/lefu/wifi/torre/register \
   -H "Content-Type: application/json" \
   -d '{
-    "sn": "lf21FD0001",
-    "type": "CF577",
-    "mac": "CF:E7:07:05:D0:32",
-    "bleVersion": "1.0.0",
-    "resVersion": "1.0.0",
-    "mcuVersion": "1.0.0",
-    "wifiVersion": "1.0.0",
-    "hardwareVersion": "CF577",
-    "skuCode": "CF577"
+    "sn": "CFE9FA280015",
+    "type": "Nubody+",
+    "mac": "CF:E9:FA:28:00:15",
+    "bleVersion": "0.0.2",
+    "resVersion": "0.3.0",
+    "mcuVersion": "0.0.2",
+    "wifiVersion": "0.0.4",
+    "hardwareVersion": "v1.0",
+    "skuCode": "EN",
+    "wifiSsid": "gigacube-A308E1",
+    "WifiPassword":"2tErj9T55j265265"
   }'
 ```
+
+---
 
 ### Test Measurement Upload
 
 ```bash
-curl -X POST https://your-app-name.up.railway.app/devices/claim/lefu/wifi/torre/record \
+curl -X POST http://192.168.0.206:8000/devices/claim/lefu/wifi/torre/record \
   -H "Content-Type: application/json" \
   -d '{
     "sn": "lf21FD0001",
@@ -250,17 +370,18 @@ Logs are visible in:
 
 - **HTTPS**: Railway provides HTTPS automatically
 - **No Authentication**: Current implementation has no auth (add if needed)
-- **No Database**: Data is logged but not persisted (add database if needed)
+- **Database**: Data is persisted to Supabase when `code: 200` is received
 - **Rate Limiting**: Not implemented (add if needed for production)
 
 ## 📚 Next Steps
 
-- Add database (PostgreSQL, MongoDB) to persist measurements
+- ✅ Database persistence (Supabase) - **COMPLETED**
 - Add authentication/authorization
 - Add rate limiting
 - Add data validation
 - Set up monitoring/alerts
 - Add webhook notifications
+- Create API endpoints to retrieve historical data
 
 ## 📄 License
 
