@@ -266,6 +266,40 @@ app.post("/lefu/wifi/torre/record", (req, res) => {
   res.status(200).json(response);
 });
 
+// Wi-Fi Provisioning: Device registration endpoint during Wi-Fi setup
+// This endpoint is called during the scale's Wi-Fi provisioning step
+// Path: /unique-scale/lefu/wifi/torre/register
+app.post("/unique-scale/lefu/wifi/torre/register", (req, res) => {
+  console.log("🔧 Wi-Fi Provisioning: Torre Device Server Registration");
+  console.log("📥 Request from scale during Wi-Fi setup");
+
+  // Get the server hostname from environment or use Railway domain
+  const serverHost =
+    process.env.RAILWAY_PUBLIC_DOMAIN ||
+    process.env.SERVER_HOST ||
+    "nuhealth-server-production.up.railway.app";
+
+  const response = {
+    code: 0,
+    msg: "ok",
+    server: serverHost,
+    port: 443,
+    scheme: "https",
+    path: "/unique-scale",
+  };
+
+  console.log("\n📤 Response (Wi-Fi Provisioning):");
+  console.log(JSON.stringify(response, null, 2));
+  console.log("=".repeat(80) + "\n");
+
+  res.set({
+    "Content-Type": "application/json",
+    Connection: "close",
+  });
+
+  res.status(200).json(response);
+});
+
 // Error handler middleware - catch any unhandled errors
 app.use((err, req, res, next) => {
   console.error("❌ Unhandled Server Error:");
@@ -328,6 +362,9 @@ app.listen(PORT, "0.0.0.0", () => {
   console.log(`   POST /lefu/wifi/torre/config (root path)`);
   console.log(`   POST /lefu/wifi/torre/checkForUpdate (root path)`);
   console.log(`   POST /lefu/wifi/torre/record (root path)`);
+  console.log(
+    `\n   POST /unique-scale/lefu/wifi/torre/register - Wi-Fi provisioning registration`
+  );
   console.log(`\n   GET /ota/:filename - OTA firmware file download`);
   console.log(`\n✅ Server ready - waiting for scale connections...\n`);
 });
