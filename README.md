@@ -268,7 +268,7 @@ ORDER BY created_at DESC;
 ### Test Device Registration$$
 
 ```bash$$
-curl -X POST https://nuhealth-server-production.up.railway.app/devices/claim/lefu/wifi/torre/register \
+curl -X POST  https://nuhealth-server-production.up.railway.app/devices/claim/lefu/wifi/torre/register \
   -H "Content-Type: application/json" \
   -d '{
     "sn": "CFE9FA280015",

@@ -165,30 +165,8 @@ app.post("/devices/claim/lefu/wifi/torre/config", (req, res) => {
   res.status(200).json(response);
 });
 
-// VENDOR PATTERN: Device POSTs measurement data to /devices/claim/lefu/wifi/torre/record
-app.post("/devices/claim/lefu/wifi/torre/record", (req, res) => {
-  console.log("📊 Torre Device Measurement Record (via /devices/claim path)");
-
-  const response = {
-    errorCode: 0,
-    text: "Record uploaded successfully",
-    data: {
-      nowTime: Date.now(),
-      recordId: Math.random().toString(36).substring(7),
-    },
-  };
-
-  console.log("\n📤 Response:");
-  console.log(JSON.stringify(response, null, 2));
-  console.log("=".repeat(80) + "\n");
-
-  res.set({
-    "Content-Type": "application/json",
-    Connection: "close",
-  });
-
-  res.status(200).json(response);
-});
+// Mount record routes (handles /devices/claim/lefu/wifi/torre/record and /lefu/wifi/torre/record)
+app.use("/", recordRoutes);
 
 // Root path endpoints (for testing without /devices/claim prefix)
 app.post("/lefu/wifi/torre/register", (req, res) => {
@@ -242,29 +220,7 @@ app.post("/lefu/wifi/torre/config", (req, res) => {
   res.status(200).json(response);
 });
 
-app.post("/lefu/wifi/torre/record", (req, res) => {
-  console.log("📊 Torre Device Measurement Record (root path)");
-
-  const response = {
-    errorCode: 0,
-    text: "Record uploaded successfully",
-    data: {
-      nowTime: Date.now(),
-      recordId: Math.random().toString(36).substring(7),
-    },
-  };
-
-  console.log("\n📤 Response:");
-  console.log(JSON.stringify(response, null, 2));
-  console.log("=".repeat(80) + "\n");
-
-  res.set({
-    "Content-Type": "application/json",
-    Connection: "close",
-  });
-
-  res.status(200).json(response);
-});
+// Record endpoint is now handled by recordRoutes (mounted above)
 
 // Wi-Fi Provisioning: Device registration endpoint during Wi-Fi setup
 // This endpoint is called during the scale's Wi-Fi provisioning step
