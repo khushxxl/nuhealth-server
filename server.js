@@ -13,7 +13,6 @@ const deviceRoutes = require("./routes/device");
 const recordRoutes = require("./routes/record");
 
 const app = express();
-const PORT = process.env.PORT || 8000;
 
 // Capture raw body as text first, then parse JSON manually
 // This allows us to handle malformed JSON gracefully
