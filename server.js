@@ -279,16 +279,60 @@ app.post("/unique-scale/lefu/wifi/torre/register", (req, res) => {
     process.env.SERVER_HOST ||
     "nuhealth-server-production.up.railway.app";
 
+  // Detect scheme from request (X-Forwarded-Proto header for proxies, or req.protocol)
+  const scheme =
+    req.headers["x-forwarded-proto"] ||
+    req.protocol ||
+    process.env.SERVER_SCHEME ||
+    "https";
+
+  // Get port from environment or detect from request
+  const port =
+    process.env.SERVER_PORT ||
+    req.headers["x-forwarded-port"] ||
+    (scheme === "https" ? 443 : 80);
+
   const response = {
     code: 0,
     msg: "ok",
     server: serverHost,
-    port: 443,
-    scheme: "https",
+    port: parseInt(port, 10),
+    scheme: scheme.split(",")[0].trim(), // Handle comma-separated values from proxies
     path: "/unique-scale",
   };
 
   console.log("\n📤 Response (Wi-Fi Provisioning):");
+  console.log(JSON.stringify(response, null, 2));
+  console.log("=".repeat(80) + "\n");
+
+  res.set({
+    "Content-Type": "application/json",
+    Connection: "close",
+  });
+
+  res.status(200).json(response);
+});
+
+// Wi-Fi Provisioning: Device configuration endpoint during Wi-Fi setup
+// This endpoint is called after registration to get device configuration
+// Path: /unique-scale/lefu/wifi/torre/config
+app.post("/unique-scale/lefu/wifi/torre/config", (req, res) => {
+  console.log("⚙️  Wi-Fi Provisioning: Torre Device Configuration Sync");
+  console.log("📥 Request from scale during Wi-Fi setup");
+
+  const now = Date.now();
+  const response = {
+    errorCode: 0,
+    text: "Get config info success",
+    data: {
+      nowTime: now,
+      now: now,
+      nowTimeSecond: Math.floor(now / 1000),
+      unit: 1,
+    },
+  };
+
+  console.log("\n📤 Response (Wi-Fi Provisioning Config):");
   console.log(JSON.stringify(response, null, 2));
   console.log("=".repeat(80) + "\n");
 
@@ -364,6 +408,9 @@ app.listen(PORT, "0.0.0.0", () => {
   console.log(`   POST /lefu/wifi/torre/record (root path)`);
   console.log(
     `\n   POST /unique-scale/lefu/wifi/torre/register - Wi-Fi provisioning registration`
+  );
+  console.log(
+    `   POST /unique-scale/lefu/wifi/torre/config - Wi-Fi provisioning configuration`
   );
   console.log(`\n   GET /ota/:filename - OTA firmware file download`);
   console.log(`\n✅ Server ready - waiting for scale connections...\n`);
