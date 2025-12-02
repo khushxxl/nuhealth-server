@@ -19,6 +19,13 @@ async function handleRecord(req, res) {
     if (processResult.success && processResult.bodyData) {
       // We got body data from Lefu API, save it
       console.log("💾 Saving record with Lefu API body data to Supabase...");
+
+      // Extract user ID from request (could be in list[0].userid or req.body.userid)
+      const userId =
+        (req.body.list && req.body.list[0] && req.body.list[0].userid) ||
+        req.body.userid ||
+        null;
+
       const recordData = {
         code: 200,
         msg: "success",
@@ -27,6 +34,7 @@ async function handleRecord(req, res) {
           errorType: req.body.errorType || "PP_ERROR_TYPE_NONE",
           lefuBodyData: processResult.bodyData,
         },
+        scaleUserId: userId,
       };
       const saveResult = await saveRecordToSupabase(
         recordData,
@@ -40,6 +48,19 @@ async function handleRecord(req, res) {
     } else if (req.body.code === 200) {
       // If request already has code 200 with body data, save it directly
       console.log("💾 Detected code 200 - saving to Supabase...");
+
+      // Extract user ID from request if not already in recordData
+      if (!req.body.scaleUserId) {
+        const userId =
+          (req.body.data?.list && req.body.data.list[0]?.userid) ||
+          (req.body.list && req.body.list[0]?.userid) ||
+          req.body.userid ||
+          null;
+        if (userId) {
+          req.body.scaleUserId = userId;
+        }
+      }
+
       const saveResult = await saveRecordToSupabase(req.body);
       if (saveResult.success) {
         console.log("✅ Data saved successfully");
