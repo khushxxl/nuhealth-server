@@ -125,6 +125,9 @@ async function saveRecordToSupabase(recordData, lefuBodyData = null) {
 
     console.log(`✅ Record saved to Supabase successfully (ID: ${recordId})`);
 
+    // Return early with record ID so summaries can be generated and updated
+    const result = { success: true, data: insertedData[0], recordId };
+
     // Now save individual measurements to scale_measurements table
     if (Array.isArray(bodyData) && bodyData.length > 0) {
       console.log(
@@ -174,14 +177,46 @@ async function saveRecordToSupabase(recordData, lefuBodyData = null) {
       console.log("⚠️  No body data to save as measurements");
     }
 
-    return { success: true, data: insertedData[0] };
+    return result;
   } catch (err) {
     console.error("❌ Error saving to Supabase:", err);
     return { success: false, error: err.message };
   }
 }
 
+/**
+ * Update goal summaries for a record
+ * @param {number} recordId - The record ID to update
+ * @param {Object} summaries - Object with summaries for each goal
+ * @returns {Promise<Object>} Result object with success status
+ */
+async function updateGoalSummaries(recordId, summaries) {
+  if (!supabase) {
+    console.log("⚠️  Supabase not configured - skipping summary update");
+    return { success: false, error: "Supabase not configured" };
+  }
+
+  try {
+    const { error } = await supabase
+      .from("scale_records")
+      .update({ goal_summaries: summaries })
+      .eq("id", recordId);
+
+    if (error) {
+      console.error("❌ Error updating goal summaries:", error);
+      return { success: false, error: error.message };
+    }
+
+    console.log("✅ Goal summaries updated successfully");
+    return { success: true };
+  } catch (err) {
+    console.error("❌ Error updating goal summaries:", err);
+    return { success: false, error: err.message };
+  }
+}
+
 module.exports = {
   saveRecordToSupabase,
+  updateGoalSummaries,
   getSupabaseClient: () => supabase,
 };

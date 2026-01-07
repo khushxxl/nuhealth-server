@@ -1,7 +1,11 @@
 const express = require("express");
 const router = express.Router();
 const { processRecordData } = require("../utils/recordProcessor");
-const { saveRecordToSupabase } = require("../services/supabase");
+const {
+  saveRecordToSupabase,
+  updateGoalSummaries,
+} = require("../services/supabase");
+const { generateSummariesForRecord } = require("../utils/summaryGenerator");
 
 /**
  * Handle record endpoint
@@ -42,6 +46,26 @@ async function handleRecord(req, res) {
       );
       if (saveResult.success) {
         console.log("✅ Data saved successfully");
+
+        // Generate and save AI summaries for goal cards
+        if (saveResult.recordId && processResult.bodyData) {
+          console.log("🤖 Generating AI summaries for goal cards...");
+          try {
+            const summaries = await generateSummariesForRecord(
+              processResult.bodyData,
+              userId,
+              saveResult.recordId
+            );
+            await updateGoalSummaries(saveResult.recordId, summaries);
+            console.log("✅ AI summaries generated and saved");
+          } catch (summaryError) {
+            console.error(
+              "⚠️  Error generating summaries:",
+              summaryError.message
+            );
+            // Don't fail the request if summaries fail
+          }
+        }
       } else {
         console.log(`⚠️  Failed to save data: ${saveResult.error}`);
       }
@@ -64,6 +88,28 @@ async function handleRecord(req, res) {
       const saveResult = await saveRecordToSupabase(req.body);
       if (saveResult.success) {
         console.log("✅ Data saved successfully");
+
+        // Generate and save AI summaries for goal cards
+        const bodyData = req.body.data?.lefuBodyData || req.body.lefuBodyData;
+        const userId = req.body.scaleUserId || null;
+        if (saveResult.recordId && bodyData && Array.isArray(bodyData)) {
+          console.log("🤖 Generating AI summaries for goal cards...");
+          try {
+            const summaries = await generateSummariesForRecord(
+              bodyData,
+              userId,
+              saveResult.recordId
+            );
+            await updateGoalSummaries(saveResult.recordId, summaries);
+            console.log("✅ AI summaries generated and saved");
+          } catch (summaryError) {
+            console.error(
+              "⚠️  Error generating summaries:",
+              summaryError.message
+            );
+            // Don't fail the request if summaries fail
+          }
+        }
       } else {
         console.log(`⚠️  Failed to save data: ${saveResult.error}`);
       }

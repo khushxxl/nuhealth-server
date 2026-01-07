@@ -14,4 +14,7 @@ module.exports = {
   // Supabase configuration
   SUPABASE_URL: process.env.SUPABASE_URL,
   SUPABASE_ANON_KEY: process.env.SUPABASE_ANON_KEY,
+
+  // OpenAI configuration
+  OPENAI_API_KEY: process.env.OPEN_AI_API,
 };

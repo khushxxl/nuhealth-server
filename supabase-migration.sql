@@ -9,6 +9,8 @@ CREATE TABLE IF NOT EXISTS scale_records (
   error_type TEXT,
   lefu_body_data JSONB DEFAULT '[]'::jsonb,
   full_data JSONB,
+  scale_user_id TEXT,
+  goal_summaries JSONB,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -45,4 +47,12 @@ COMMENT ON COLUMN scale_records.version IS 'Device firmware version';
 COMMENT ON COLUMN scale_records.error_type IS 'Error type from device (e.g., PP_ERROR_TYPE_NONE)';
 COMMENT ON COLUMN scale_records.lefu_body_data IS 'Array of body parameter measurements';
 COMMENT ON COLUMN scale_records.full_data IS 'Complete JSON payload from device for reference';
+COMMENT ON COLUMN scale_records.scale_user_id IS 'User ID associated with this measurement';
+COMMENT ON COLUMN scale_records.goal_summaries IS 'AI-generated summaries for 6 goal cards (General Health, Recovery, Energy, Longevity, Weight Loss, Pain Relief)';
+
+-- Create index on scale_user_id for faster user-based queries
+CREATE INDEX IF NOT EXISTS idx_scale_records_scale_user_id ON scale_records(scale_user_id);
+
+-- Create GIN index on goal_summaries for JSONB queries
+CREATE INDEX IF NOT EXISTS idx_scale_records_goal_summaries ON scale_records USING GIN(goal_summaries);
 
