@@ -12,22 +12,101 @@ if (OPENAI_API_KEY) {
   console.log(
     "⚠️  OpenAI API key not found - AI summaries will not be generated"
   );
-  console.log("   Set OPENAI_API_KEY environment variable");
+  console.log("   Set OPEN_AI_API environment variable");
 }
 
 /**
- * Generate AI summary for a goal card
+ * Calculate percentage change between two values
+ */
+function calculatePercentageChange(oldValue, newValue) {
+  if (!oldValue || oldValue === 0) return null;
+  return ((newValue - oldValue) / oldValue) * 100;
+}
+
+/**
+ * Format metric value with unit
+ */
+function formatMetricValue(key, value) {
+  if (value === null || value === undefined) return null;
+
+  // Map common units
+  const unitMap = {
+    ppWeightKg: "lb",
+    ppBMI: "",
+    ppHeartRate: "bpm",
+    ppBMR: "kcal",
+    ppMuscleKg: "lb",
+    ppFat: "%",
+    ppBodyScore: "points",
+    ppBodyAge: "years",
+  };
+
+  const unit = unitMap[key] || "";
+  return unit ? `${value} ${unit}` : value.toString();
+}
+
+/**
+ * Build metrics comparison text for prompt
+ */
+function buildMetricsComparisonText(
+  currentMetrics,
+  twoWeeksAgoMetrics,
+  metricKeys
+) {
+  let text = "Current metrics (today):\n";
+  const changes = [];
+
+  metricKeys.forEach((key) => {
+    const current = currentMetrics[key];
+    const twoWeeksAgo = twoWeeksAgoMetrics?.[key];
+
+    if (current !== null && current !== undefined) {
+      text += `- ${key}: ${formatMetricValue(key, current)}`;
+
+      if (twoWeeksAgo !== null && twoWeeksAgo !== undefined) {
+        const change = current - twoWeeksAgo;
+        const percentChange = calculatePercentageChange(twoWeeksAgo, current);
+
+        text += ` (was ${formatMetricValue(key, twoWeeksAgo)})`;
+
+        if (percentChange !== null) {
+          changes.push({
+            key,
+            change,
+            percentChange: Math.abs(percentChange),
+            direction: change > 0 ? "up" : change < 0 ? "down" : "stable",
+          });
+        }
+      }
+      text += "\n";
+    }
+  });
+
+  if (changes.length > 0) {
+    text += "\nKey changes over last two weeks:\n";
+    changes.slice(0, 5).forEach((c) => {
+      text += `- ${c.key}: ${c.direction} by ${Math.abs(c.change).toFixed(
+        1
+      )} (${c.percentChange.toFixed(1)}%)\n`;
+    });
+  }
+
+  return text;
+}
+
+/**
+ * Generate AI summary for a goal card with header and body
  * @param {Object} params - Parameters for summary generation
  * @param {string} params.goalName - Name of the goal (e.g., "General Health")
  * @param {Object} params.currentMetrics - Current metric values
- * @param {Object} params.previousMetrics - Previous metric values (optional)
+ * @param {Object} params.twoWeeksAgoMetrics - Metrics from two weeks ago (optional)
  * @param {Array} params.metricKeys - Array of metric keys for this goal
- * @returns {Promise<string|null>} Generated summary or null if failed
+ * @returns {Promise<Object|null>} Generated summary with header and body or null if failed
  */
 async function generateGoalSummary({
   goalName,
   currentMetrics,
-  previousMetrics = null,
+  twoWeeksAgoMetrics = null,
   metricKeys,
 }) {
   if (!openai) {
@@ -36,37 +115,36 @@ async function generateGoalSummary({
   }
 
   try {
-    // Build metric comparison text
-    let metricsText = "Current metrics:\n";
-    metricKeys.forEach((key) => {
-      const current = currentMetrics[key];
-      if (current !== null && current !== undefined) {
-        metricsText += `- ${key}: ${current}\n`;
-      }
-    });
+    const metricsText = buildMetricsComparisonText(
+      currentMetrics,
+      twoWeeksAgoMetrics,
+      metricKeys
+    );
 
-    if (previousMetrics) {
-      metricsText += "\nPrevious metrics (for comparison):\n";
-      metricKeys.forEach((key) => {
-        const previous = previousMetrics[key];
-        if (previous !== null && previous !== undefined) {
-          metricsText += `- ${key}: ${previous}\n`;
-        }
-      });
-    }
-
-    const prompt = `You are a health and wellness coach. Generate a brief, encouraging 2-line summary about the user's progress for the "${goalName}" goal based on their body composition metrics.
+    const prompt = `You are a health and wellness coach. Generate a summary for the "${goalName}" goal card based on body composition metrics from the last two weeks.
 
 ${metricsText}
 
-Generate exactly 2 lines that:
-1. Are encouraging and positive
-2. Highlight key improvements or areas of focus based on the metrics
-3. Are concise and easy to understand (each line should be 10-15 words max)
-4. Focus on progress and motivation
-5. If previous metrics are provided, compare and highlight trends
+Generate a summary with:
+1. HEADER: A short, encouraging header (25-35 characters including spaces). Examples: "Your overall trends this week", "Recovery score on the rise", "Daily energy adapting well"
 
-Format as two separate lines, no bullet points or numbering. Each line should be a complete, meaningful sentence.`;
+2. BODY: A 2-line summary (160-190 characters total, or up to 220-240 if 3 lines needed) that:
+   - Reviews trends over the last two weeks
+   - Uses specific numbers with units (lbs, %, bpm, kcal, points, etc.)
+   - Celebrates wins and improvements
+   - Encourages on areas needing attention
+   - Contextualizes why changes relate to the goal
+   - Mentions "over the last two weeks" or "in the past two weeks"
+   - Focuses on well-known metrics but doesn't ignore lesser-known ones
+   - Uses percentage changes and quantity changes (e.g., "by about X lb (Y%)")
+
+Format your response as JSON:
+{
+  "header": "Header text here",
+  "body": "Line 1 text\nLine 2 text"
+}
+
+Only include metrics that are in the provided list. Be specific with numbers and trends.`;
 
     const response = await openai.chat.completions.create({
       model: "gpt-4o-mini",
@@ -74,22 +152,31 @@ Format as two separate lines, no bullet points or numbering. Each line should be
         {
           role: "system",
           content:
-            "You are a helpful health and wellness coach that provides encouraging, concise feedback about body composition metrics.",
+            "You are a helpful health and wellness coach that provides encouraging, concise feedback about body composition metrics. Always respond with valid JSON only.",
         },
         {
           role: "user",
           content: prompt,
         },
       ],
-      max_tokens: 150,
+      max_tokens: 300,
       temperature: 0.7,
+      response_format: { type: "json_object" },
     });
 
-    const summary = response.choices[0]?.message?.content?.trim();
-    if (summary) {
-      // Split into 2 lines if needed
-      const lines = summary.split("\n").filter((line) => line.trim());
-      return lines.slice(0, 2).join("\n");
+    const content = response.choices[0]?.message?.content?.trim();
+    if (content) {
+      try {
+        const parsed = JSON.parse(content);
+        if (parsed.header && parsed.body) {
+          // Combine header and body into a single string
+          return `${parsed.header.trim()}\n${parsed.body.trim()}`;
+        }
+      } catch (parseError) {
+        console.error(`❌ Error parsing JSON for ${goalName}:`, parseError);
+        // Fallback: use the content as-is
+        return content;
+      }
     }
 
     return null;
@@ -105,40 +192,127 @@ Format as two separate lines, no bullet points or numbering. Each line should be
 /**
  * Generate summaries for all 6 goal cards
  * @param {Object} currentMetrics - Current metric values from body data
- * @param {Object} previousMetrics - Previous metric values (optional)
- * @returns {Promise<Object>} Object with summaries for each goal
+ * @param {Object} twoWeeksAgoMetrics - Metrics from two weeks ago (optional)
+ * @returns {Promise<Object>} Object with summaries (header + body) for each goal
  */
 async function generateAllGoalSummaries(
   currentMetrics,
-  previousMetrics = null
+  twoWeeksAgoMetrics = null
 ) {
   const summaries = {};
 
-  // Goal card configurations
+  // Goal card configurations with all relevant metrics
+  // Mapping user-provided metric names to actual body data keys (pp prefix)
   const goalConfigs = [
     {
-      name: "General Health",
-      keys: ["ppBodyScore", "ppBodyAge", "ppWeightKg"],
+      name: "Overview",
+      keys: [
+        "ppWeightKg",
+        "ppHeartRate",
+        "ppBMI",
+        "ppWaterPercentage",
+        "ppBodyAge",
+        "ppBodyScore",
+        // Note: Arm/Leg/Trunk metrics would need specific keys if available in body data
+      ],
     },
     {
       name: "Recovery",
-      keys: ["ppBodyScore", "ppMusclePercentage", "ppWaterPercentage"],
+      keys: [
+        "ppWeightKg",
+        "ppHeartRate",
+        "ppBMR",
+        "ppBMI",
+        "ppMusclePercentage",
+        "ppMuscleKg",
+        "ppProteinPercentage",
+        "ppProteinKg",
+        "ppWaterPercentage",
+        "ppBodySkeletalKg",
+        "ppBodyScore",
+      ],
     },
     {
       name: "Energy",
-      keys: ["ppBMR", "ppMusclePercentage", "ppProteinPercentage"],
+      keys: [
+        "ppWeightKg",
+        "ppHeartRate",
+        "ppBMR",
+        "ppMusclePercentage",
+        "ppMuscleKg",
+        "ppProteinPercentage",
+        "ppProteinKg",
+        "ppWaterPercentage",
+        "ppBodySkeletalKg",
+        "ppBodyAge",
+        "ppBodyScore",
+      ],
     },
     {
       name: "Longevity",
-      keys: ["ppBodyScore", "ppBodyAge", "ppFat"],
+      keys: [
+        "ppWeightKg",
+        "ppHeartRate",
+        "ppBMR",
+        "ppBMI",
+        "ppFat",
+        "ppFatKg",
+        "ppMusclePercentage",
+        "ppMuscleKg",
+        "ppProteinPercentage",
+        "ppProteinKg",
+        "ppWaterPercentage",
+        "ppBodyAge",
+        "ppBodyScore",
+      ],
     },
     {
       name: "Weight Loss",
-      keys: ["ppWeightKg", "ppBMI", "ppFat"],
+      keys: [
+        "ppWeightKg",
+        "ppHeartRate",
+        "ppBMR",
+        "ppBMI",
+        "ppFat",
+        "ppFatKg",
+        "ppMusclePercentage",
+        "ppMuscleKg",
+        "ppWaterPercentage",
+        "ppBodyAge",
+        "ppBodyScore",
+      ],
     },
     {
       name: "Pain Relief",
-      keys: ["ppMuscleKg", "ppBodySkeletalKg", "ppProteinKg"],
+      keys: [
+        "ppHeartRate",
+        "ppBMR",
+        "ppFat",
+        "ppFatKg",
+        "ppMusclePercentage",
+        "ppMuscleKg",
+        "ppWaterPercentage",
+        "ppBodySkeletalKg",
+        "ppBodyScore",
+      ],
+    },
+    {
+      name: "General Health",
+      keys: [
+        "ppWeightKg",
+        "ppHeartRate",
+        "ppBMR",
+        "ppBMI",
+        "ppFat",
+        "ppFatKg",
+        "ppMusclePercentage",
+        "ppMuscleKg",
+        "ppProteinPercentage",
+        "ppProteinKg",
+        "ppWaterPercentage",
+        "ppBodyAge",
+        "ppBodyScore",
+      ],
     },
   ];
 
@@ -147,7 +321,7 @@ async function generateAllGoalSummaries(
     const summary = await generateGoalSummary({
       goalName: config.name,
       currentMetrics,
-      previousMetrics,
+      twoWeeksAgoMetrics,
       metricKeys: config.keys,
     });
 

@@ -27,7 +27,9 @@ function extractMetricsFromBodyData(bodyData) {
         : null;
 
     if (key && value !== null && value !== undefined) {
-      metrics[key] = value;
+      // Convert to number if possible
+      const numValue = typeof value === "string" ? parseFloat(value) : value;
+      metrics[key] = isNaN(numValue) ? value : numValue;
     }
   });
 
@@ -35,35 +37,67 @@ function extractMetricsFromBodyData(bodyData) {
 }
 
 /**
- * Get previous metrics for a user from the database
+ * Get metrics from two weeks ago for a user from the database
  * @param {string} scaleUserId - User ID
  * @param {number} currentRecordId - Current record ID to exclude
- * @returns {Promise<Object|null>} Previous metrics or null
+ * @param {Date} currentDate - Current date/time
+ * @returns {Promise<Object|null>} Metrics from two weeks ago or null
  */
-async function getPreviousMetrics(scaleUserId, currentRecordId) {
+async function getTwoWeeksAgoMetrics(
+  scaleUserId,
+  currentRecordId,
+  currentDate
+) {
   const supabase = getSupabaseClient();
   if (!supabase || !scaleUserId) {
     return null;
   }
 
   try {
-    // Get the most recent record before the current one
+    // Calculate date two weeks ago (14 days)
+    const twoWeeksAgo = new Date(currentDate);
+    twoWeeksAgo.setDate(twoWeeksAgo.getDate() - 14);
+
+    // Get records from around two weeks ago (within a 3-day window for flexibility)
+    const threeDaysAgo = new Date(twoWeeksAgo);
+    threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
+    const threeDaysAfter = new Date(twoWeeksAgo);
+    threeDaysAfter.setDate(threeDaysAfter.getDate() + 3);
+
+    // Get the closest record to two weeks ago
     const { data, error } = await supabase
       .from("scale_records")
-      .select("lefu_body_data")
+      .select("lefu_body_data, created_at")
       .eq("scale_user_id", scaleUserId)
       .neq("id", currentRecordId)
+      .gte("created_at", threeDaysAgo.toISOString())
+      .lte("created_at", threeDaysAfter.toISOString())
       .order("created_at", { ascending: false })
       .limit(1)
-      .single();
+      .maybeSingle();
 
+    // If no record found in the window, try to get the oldest record before current
     if (error || !data || !data.lefu_body_data) {
-      return null;
+      const { data: fallbackData, error: fallbackError } = await supabase
+        .from("scale_records")
+        .select("lefu_body_data, created_at")
+        .eq("scale_user_id", scaleUserId)
+        .neq("id", currentRecordId)
+        .lt("created_at", currentDate.toISOString())
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (fallbackError || !fallbackData || !fallbackData.lefu_body_data) {
+        return null;
+      }
+
+      return extractMetricsFromBodyData(fallbackData.lefu_body_data);
     }
 
     return extractMetricsFromBodyData(data.lefu_body_data);
   } catch (err) {
-    console.error("❌ Error fetching previous metrics:", err.message);
+    console.error("❌ Error fetching two weeks ago metrics:", err.message);
     return null;
   }
 }
@@ -73,7 +107,7 @@ async function getPreviousMetrics(scaleUserId, currentRecordId) {
  * @param {Array} bodyData - Current body data array
  * @param {string} scaleUserId - User ID for fetching previous metrics
  * @param {number} currentRecordId - Current record ID
- * @returns {Promise<Object>} Object with summaries for each goal
+ * @returns {Promise<Object>} Object with summaries (header + body) for each goal
  */
 async function generateSummariesForRecord(
   bodyData,
@@ -84,36 +118,41 @@ async function generateSummariesForRecord(
     // Extract current metrics
     const currentMetrics = extractMetricsFromBodyData(bodyData);
 
-    // Get previous metrics if user ID is available
-    let previousMetrics = null;
+    // Get metrics from two weeks ago if user ID is available
+    let twoWeeksAgoMetrics = null;
     if (scaleUserId && currentRecordId) {
-      previousMetrics = await getPreviousMetrics(scaleUserId, currentRecordId);
+      twoWeeksAgoMetrics = await getTwoWeeksAgoMetrics(
+        scaleUserId,
+        currentRecordId,
+        new Date()
+      );
     }
 
     // Generate summaries for all goals
     const summaries = await generateAllGoalSummaries(
       currentMetrics,
-      previousMetrics
+      twoWeeksAgoMetrics
     );
 
     return summaries;
   } catch (error) {
     console.error("❌ Error generating summaries:", error.message);
     // Return default summaries on error
+    const defaultSummary = "Progress tracking in progress...";
     return {
-      "General Health": "Progress tracking in progress...",
-      Recovery: "Progress tracking in progress...",
-      Energy: "Progress tracking in progress...",
-      Longevity: "Progress tracking in progress...",
-      "Weight Loss": "Progress tracking in progress...",
-      "Pain Relief": "Progress tracking in progress...",
+      Overview: defaultSummary,
+      Recovery: defaultSummary,
+      Energy: defaultSummary,
+      Longevity: defaultSummary,
+      "Weight Loss": defaultSummary,
+      "Pain Relief": defaultSummary,
+      "General Health": defaultSummary,
     };
   }
 }
 
 module.exports = {
   extractMetricsFromBodyData,
-  getPreviousMetrics,
+  getTwoWeeksAgoMetrics,
   generateSummariesForRecord,
 };
-
