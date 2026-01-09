@@ -138,7 +138,10 @@ async function generateSummariesForRecord(
   } catch (error) {
     console.error("❌ Error generating summaries:", error.message);
     // Return default summaries on error
-    const defaultSummary = "Progress tracking in progress...";
+    const defaultSummary = {
+      header: "Tracking progress",
+      body: "Progress tracking in progress...",
+    };
     return {
       Overview: defaultSummary,
       Recovery: defaultSummary,

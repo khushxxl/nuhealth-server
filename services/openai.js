@@ -169,13 +169,21 @@ Only include metrics that are in the provided list. Be specific with numbers and
       try {
         const parsed = JSON.parse(content);
         if (parsed.header && parsed.body) {
-          // Combine header and body into a single string
-          return `${parsed.header.trim()}\n${parsed.body.trim()}`;
+          return {
+            header: parsed.header.trim(),
+            body: parsed.body.trim(),
+          };
         }
       } catch (parseError) {
         console.error(`❌ Error parsing JSON for ${goalName}:`, parseError);
-        // Fallback: use the content as-is
-        return content;
+        // Fallback: try to extract header and body from text
+        const lines = content.split("\n").filter((line) => line.trim());
+        if (lines.length >= 2) {
+          return {
+            header: lines[0].trim().substring(0, 35),
+            body: lines.slice(1).join("\n").trim(),
+          };
+        }
       }
     }
 
@@ -325,7 +333,10 @@ async function generateAllGoalSummaries(
       metricKeys: config.keys,
     });
 
-    summaries[config.name] = summary || "Progress tracking in progress...";
+    summaries[config.name] = summary || {
+      header: "Tracking progress",
+      body: "Progress tracking in progress...",
+    };
   }
 
   return summaries;
