@@ -11,6 +11,8 @@ const {
 } = require("./middleware/errorHandler");
 const deviceRoutes = require("./routes/device");
 const recordRoutes = require("./routes/record");
+const { getSupabaseClient } = require("./services/supabase");
+const { OPENAI_API_KEY } = require("./config/constants");
 
 const app = express();
 
@@ -110,6 +112,90 @@ app.use((req, res, next) => {
   }
 
   next();
+});
+
+// Health check endpoint with database/service checks
+app.get("/health", async (req, res) => {
+  const health = {
+    status: "healthy",
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    services: {
+      server: {
+        status: "healthy",
+        message: "Server is running",
+      },
+      database: {
+        status: "unknown",
+        message: "Not checked",
+      },
+      openai: {
+        status: "unknown",
+        message: "Not checked",
+      },
+    },
+  };
+
+  let overallHealthy = true;
+
+  // Check Supabase database connection
+  const supabase = getSupabaseClient();
+  if (supabase) {
+    try {
+      // Perform a simple query to check database connectivity
+      const { data, error } = await supabase
+        .from("scale_records")
+        .select("id")
+        .limit(1);
+
+      if (error) {
+        health.services.database = {
+          status: "unhealthy",
+          message: `Database connection failed: ${error.message}`,
+        };
+        overallHealthy = false;
+      } else {
+        health.services.database = {
+          status: "healthy",
+          message: "Database connection successful",
+        };
+      }
+    } catch (err) {
+      health.services.database = {
+        status: "unhealthy",
+        message: `Database check error: ${err.message}`,
+      };
+      overallHealthy = false;
+    }
+  } else {
+    health.services.database = {
+      status: "unhealthy",
+      message: "Supabase client not initialized",
+    };
+    overallHealthy = false;
+  }
+
+  // Check OpenAI service configuration
+  if (OPENAI_API_KEY) {
+    health.services.openai = {
+      status: "healthy",
+      message: "OpenAI API key configured",
+    };
+  } else {
+    health.services.openai = {
+      status: "degraded",
+      message: "OpenAI API key not configured (optional service)",
+    };
+    // OpenAI is optional, so we don't mark overall as unhealthy
+  }
+
+  // Set overall status
+  health.status = overallHealthy ? "healthy" : "unhealthy";
+
+  // Return appropriate HTTP status code
+  const statusCode = overallHealthy ? 200 : 503;
+
+  res.status(statusCode).json(health);
 });
 
 // VENDOR PATTERN: Device POSTs to /devices/claim/lefu/wifi/torre/register
@@ -346,6 +432,7 @@ app.listen(PORT, "0.0.0.0", () => {
   console.log(`   Listening on: ${serverUrl}`);
   console.log(`   Port: ${PORT}`);
   console.log(`\n📡 Available Endpoints:`);
+  console.log(`   GET  /health - Health check with database/service status`);
   console.log(
     `   POST /devices/claim/lefu/wifi/torre/register - Device registration`
   );
