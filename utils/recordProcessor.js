@@ -1,4 +1,5 @@
 const { mapImpedanceArray, fetchLefuBodyData } = require("../services/lefu");
+const { getUserProfile } = require("../services/supabase");
 
 /**
  * Extract parameters from request and fetch body data from Lefu API
@@ -73,8 +74,15 @@ async function processRecordData(reqBody) {
     if (product === undefined && reqBody.product !== undefined)
       product = reqBody.product;
 
-    // Debug logging for extracted parameters
+    // Extract user ID for database lookup
+    const userId =
+      (reqBody.list && reqBody.list[0] && reqBody.list[0].userid) ||
+      reqBody.userid ||
+      null;
+
+    // Debug logging for extracted parameters from request
     console.log("📊 Extracted Parameters from Request:");
+    console.log(`   User ID: ${userId || "(MISSING)"}`);
     console.log(`   Age: ${age} ${age === undefined ? "(MISSING)" : ""}`);
     console.log(
       `   Height: ${height} ${height === undefined ? "(MISSING)" : ""}`,
@@ -86,6 +94,48 @@ async function processRecordData(reqBody) {
     console.log(
       `   Product: ${product} ${product === undefined ? "(MISSING)" : ""}`,
     );
+
+    // If we're missing critical parameters, try to fetch from user profile
+    if (
+      userId &&
+      (age === undefined || height === undefined || sex === undefined)
+    ) {
+      console.log("🔍 Missing parameters, fetching user profile from database...");
+      const profileResult = await getUserProfile(userId);
+
+      if (profileResult.success && profileResult.profile) {
+        const profile = profileResult.profile;
+
+        // Only use profile data if request didn't provide it
+        if (age === undefined && profile.age !== null) {
+          age = profile.age;
+          console.log(`   ✅ Using age from profile: ${age}`);
+        }
+        if (height === undefined && profile.height !== null) {
+          height = profile.height;
+          console.log(`   ✅ Using height from profile: ${height}`);
+        }
+        if (sex === undefined && profile.gender !== null) {
+          // Map gender text to sex number (1 = male, 2 = female)
+          const genderMap = {
+            male: 1,
+            female: 2,
+            m: 1,
+            f: 2,
+          };
+          sex =
+            genderMap[profile.gender?.toLowerCase()] ||
+            (profile.gender === "1" ? 1 : profile.gender === "2" ? 2 : undefined);
+          console.log(
+            `   ✅ Using gender from profile: ${profile.gender} (mapped to sex: ${sex})`,
+          );
+        }
+      } else {
+        console.log(
+          `   ⚠️  Could not fetch user profile: ${profileResult.error || "Unknown error"}`,
+        );
+      }
+    }
 
     // If we don't have impedance array, log and return
     if (
@@ -108,17 +158,29 @@ async function processRecordData(reqBody) {
     // Map impedance array to API parameters
     const impedanceParams = mapImpedanceArray(impedanceArray);
 
-    // Build API request parameters using only extracted values
+    // Build API request parameters using extracted values
     const apiParams = {
       ...impedanceParams,
       age: age,
       height: height,
       weightKg: weightKg,
       sex: sex,
-      product: product,
+      product: product || 5,
     };
 
-    console.log("📋 API Parameters:", JSON.stringify(apiParams, null, 2));
+    console.log("\n📋 Final API Parameters (sending to Lefu API):");
+    console.log(`   Age: ${age} ${age === undefined ? "❌ MISSING" : "✅"}`);
+    console.log(
+      `   Height: ${height} ${height === undefined ? "❌ MISSING" : "✅"}`,
+    );
+    console.log(
+      `   Weight: ${weightKg} ${weightKg === undefined ? "❌ MISSING" : "✅"}`,
+    );
+    console.log(`   Sex: ${sex} ${sex === undefined ? "❌ MISSING" : "✅"}`);
+    console.log(`   Product: ${apiParams.product} ✅`);
+    console.log(
+      `   Impedance values: ${Object.keys(impedanceParams).length} parameters ✅`,
+    );
 
     // Fetch body data from Lefu API
     const result = await fetchLefuBodyData(apiParams);

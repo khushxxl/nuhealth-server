@@ -8,10 +8,10 @@ if (SUPABASE_URL && SUPABASE_ANON_KEY) {
   console.log("✅ Supabase client initialized");
 } else {
   console.log(
-    "⚠️  Supabase credentials not found - data will not be saved to database"
+    "⚠️  Supabase credentials not found - data will not be saved to database",
   );
   console.log(
-    "   Set SUPABASE_URL and SUPABASE_ANON_KEY environment variables"
+    "   Set SUPABASE_URL and SUPABASE_ANON_KEY environment variables",
   );
 }
 
@@ -58,7 +58,7 @@ function mapBodyDataToMeasurement(bodyDataItem) {
     standard_array: getValue("standardArray", "standard_array"),
     standard_title_array: getValue(
       "standardTitleArray",
-      "standard_title_array"
+      "standard_title_array",
     ),
     introduction: getValue("introduction", "introduction"),
     stand_suggestion: getValue("standSuggestion", "stand_suggestion"),
@@ -131,7 +131,7 @@ async function saveRecordToSupabase(recordData, lefuBodyData = null) {
     // Now save individual measurements to scale_measurements table
     if (Array.isArray(bodyData) && bodyData.length > 0) {
       console.log(
-        `💾 Saving ${bodyData.length} measurements to scale_measurements...`
+        `💾 Saving ${bodyData.length} measurements to scale_measurements...`,
       );
 
       // Filter and map body data items, only including those with body_param_key (required field)
@@ -142,7 +142,7 @@ async function saveRecordToSupabase(recordData, lefuBodyData = null) {
             (item.bodyParamKey ||
               item.body_param_key ||
               item.bodyParam ||
-              item.body_param)
+              item.body_param),
         )
         .map((item) => ({
           scale_record_id: recordId,
@@ -152,7 +152,7 @@ async function saveRecordToSupabase(recordData, lefuBodyData = null) {
 
       if (measurementsToInsert.length === 0) {
         console.log(
-          "⚠️  No valid measurements to save (missing body_param_key)"
+          "⚠️  No valid measurements to save (missing body_param_key)",
         );
       } else {
         const { data: insertedMeasurements, error: measurementsError } =
@@ -169,7 +169,7 @@ async function saveRecordToSupabase(recordData, lefuBodyData = null) {
           console.log(
             `✅ Saved ${
               insertedMeasurements?.length || 0
-            } measurements to scale_measurements`
+            } measurements to scale_measurements`,
           );
         }
       }
@@ -180,6 +180,58 @@ async function saveRecordToSupabase(recordData, lefuBodyData = null) {
     return result;
   } catch (err) {
     console.error("❌ Error saving to Supabase:", err);
+    return { success: false, error: err.message };
+  }
+}
+
+/**
+ * Fetch user profile data from users table
+ * @param {string} userId - The user ID (UUID)
+ * @returns {Promise<Object>} Result object with user profile data
+ */
+async function getUserProfile(userId) {
+  if (!supabase) {
+    console.log("⚠️  Supabase not configured - skipping user profile fetch");
+    return { success: false, error: "Supabase not configured" };
+  }
+
+  if (!userId) {
+    return { success: false, error: "No user ID provided" };
+  }
+
+  try {
+    console.log(`👤 Fetching user profile for user ID: ${userId}`);
+    const { data, error } = await supabase
+      .from("users")
+      .select("age, height, gender")
+      .eq("id", userId)
+      .single();
+
+    if (error) {
+      console.error("❌ Error fetching user profile:", error);
+      return { success: false, error: error.message };
+    }
+
+    if (!data) {
+      console.log("⚠️  No user profile found");
+      return { success: false, error: "User not found" };
+    }
+
+    console.log("✅ User profile fetched successfully");
+    console.log(`   Age: ${data.age || "not set"}`);
+    console.log(`   Height: ${data.height || "not set"}`);
+    console.log(`   Gender: ${data.gender || "not set"}`);
+
+    return {
+      success: true,
+      profile: {
+        age: data.age,
+        height: data.height,
+        gender: data.gender,
+      },
+    };
+  } catch (err) {
+    console.error("❌ Error fetching user profile:", err);
     return { success: false, error: err.message };
   }
 }
@@ -218,5 +270,6 @@ async function updateGoalSummaries(recordId, summaries) {
 module.exports = {
   saveRecordToSupabase,
   updateGoalSummaries,
+  getUserProfile,
   getSupabaseClient: () => supabase,
 };
