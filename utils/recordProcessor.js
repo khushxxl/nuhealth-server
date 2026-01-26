@@ -83,7 +83,7 @@ async function processRecordData(reqBody) {
       console.log("   Request body keys:", Object.keys(reqBody));
       console.log(
         "   Request body sample:",
-        JSON.stringify(reqBody, null, 2).substring(0, 1000)
+        JSON.stringify(reqBody, null, 2).substring(0, 1000),
       );
       return {
         success: false,
@@ -94,14 +94,14 @@ async function processRecordData(reqBody) {
     // Map impedance array to API parameters
     const impedanceParams = mapImpedanceArray(impedanceArray);
 
-    // Build API request parameters
+    // Build API request parameters using only extracted values
     const apiParams = {
       ...impedanceParams,
-      age: 20,
-      height: 170,
-      weightKg: 70,
-      sex: 1,
-      product: 5,
+      age: age,
+      height: height,
+      weightKg: weightKg,
+      sex: sex,
+      product: product,
     };
 
     console.log("📋 API Parameters:", JSON.stringify(apiParams, null, 2));
@@ -112,7 +112,7 @@ async function processRecordData(reqBody) {
     if (result.success && result.data && result.data.data) {
       const bodyData = result.data.data.lefuBodyData || [];
       console.log(
-        `✅ Extracted ${bodyData.length} body data items from API response`
+        `✅ Extracted ${bodyData.length} body data items from API response`,
       );
       return { success: true, bodyData: bodyData };
     } else {
