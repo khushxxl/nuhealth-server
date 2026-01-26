@@ -73,6 +73,20 @@ async function processRecordData(reqBody) {
     if (product === undefined && reqBody.product !== undefined)
       product = reqBody.product;
 
+    // Debug logging for extracted parameters
+    console.log("📊 Extracted Parameters from Request:");
+    console.log(`   Age: ${age} ${age === undefined ? "(MISSING)" : ""}`);
+    console.log(
+      `   Height: ${height} ${height === undefined ? "(MISSING)" : ""}`,
+    );
+    console.log(
+      `   Weight: ${weightKg} ${weightKg === undefined ? "(MISSING)" : ""}`,
+    );
+    console.log(`   Sex: ${sex} ${sex === undefined ? "(MISSING)" : ""}`);
+    console.log(
+      `   Product: ${product} ${product === undefined ? "(MISSING)" : ""}`,
+    );
+
     // If we don't have impedance array, log and return
     if (
       !impedanceArray ||

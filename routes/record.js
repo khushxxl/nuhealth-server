@@ -42,7 +42,7 @@ async function handleRecord(req, res) {
       };
       const saveResult = await saveRecordToSupabase(
         recordData,
-        processResult.bodyData
+        processResult.bodyData,
       );
       if (saveResult.success) {
         console.log("✅ Data saved successfully");
@@ -54,14 +54,14 @@ async function handleRecord(req, res) {
             const summaries = await generateSummariesForRecord(
               processResult.bodyData,
               userId,
-              saveResult.recordId
+              saveResult.recordId,
             );
             await updateGoalSummaries(saveResult.recordId, summaries);
             console.log("✅ AI summaries generated and saved");
           } catch (summaryError) {
             console.error(
               "⚠️  Error generating summaries:",
-              summaryError.message
+              summaryError.message,
             );
             // Don't fail the request if summaries fail
           }
@@ -98,14 +98,14 @@ async function handleRecord(req, res) {
             const summaries = await generateSummariesForRecord(
               bodyData,
               userId,
-              saveResult.recordId
+              saveResult.recordId,
             );
             await updateGoalSummaries(saveResult.recordId, summaries);
             console.log("✅ AI summaries generated and saved");
           } catch (summaryError) {
             console.error(
               "⚠️  Error generating summaries:",
-              summaryError.message
+              summaryError.message,
             );
             // Don't fail the request if summaries fail
           }
