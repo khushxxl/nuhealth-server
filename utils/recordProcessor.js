@@ -143,6 +143,19 @@ async function processRecordData(reqBody) {
       }
     }
 
+    // Default height (cm) if missing or invalid — ensure we never fail the request for height
+    const DEFAULT_HEIGHT_CM = 195;
+    const heightNum =
+      height !== undefined && height !== null && height !== ""
+        ? Number(height)
+        : NaN;
+    if (!Number.isFinite(heightNum) || heightNum <= 0) {
+      height = DEFAULT_HEIGHT_CM;
+      console.log(`   ✅ Using default height: ${height} cm`);
+    } else {
+      height = heightNum;
+    }
+
     // If we don't have impedance array, log and return
     if (
       !impedanceArray ||
