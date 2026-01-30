@@ -137,19 +137,20 @@ async function generateSummariesForRecord(
     return summaries;
   } catch (error) {
     console.error("❌ Error generating summaries:", error.message);
-    // Return default summaries on error
+    // Return default summaries on error (same shape: kg + lbs per goal)
     const defaultSummary = {
       header: "Tracking progress",
       body: "Progress tracking in progress...",
     };
+    const defaultGoal = { kg: defaultSummary, lbs: defaultSummary };
     return {
-      Overview: defaultSummary,
-      Recovery: defaultSummary,
-      Energy: defaultSummary,
-      Longevity: defaultSummary,
-      "Weight Loss": defaultSummary,
-      "Pain Relief": defaultSummary,
-      "General Health": defaultSummary,
+      Overview: defaultGoal,
+      Recovery: defaultGoal,
+      Energy: defaultGoal,
+      Longevity: defaultGoal,
+      "Weight Loss": defaultGoal,
+      "Pain Relief": defaultGoal,
+      "General Health": defaultGoal,
     };
   }
 }

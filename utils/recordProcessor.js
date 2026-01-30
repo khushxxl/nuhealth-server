@@ -100,7 +100,9 @@ async function processRecordData(reqBody) {
       userId &&
       (age === undefined || height === undefined || sex === undefined)
     ) {
-      console.log("🔍 Missing parameters, fetching user profile from database...");
+      console.log(
+        "🔍 Missing parameters, fetching user profile from database...",
+      );
       const profileResult = await getUserProfile(userId);
 
       if (profileResult.success && profileResult.profile) {
@@ -125,7 +127,11 @@ async function processRecordData(reqBody) {
           };
           sex =
             genderMap[profile.gender?.toLowerCase()] ||
-            (profile.gender === "1" ? 1 : profile.gender === "2" ? 2 : undefined);
+            (profile.gender === "1"
+              ? 1
+              : profile.gender === "2"
+                ? 2
+                : undefined);
           console.log(
             `   ✅ Using gender from profile: ${profile.gender} (mapped to sex: ${sex})`,
           );

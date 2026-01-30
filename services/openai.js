@@ -15,6 +15,17 @@ if (OPENAI_API_KEY) {
   console.log("   Set OPEN_AI_API environment variable");
 }
 
+const KG_TO_LBS = 2.20462;
+
+/** Weight-related metric keys (values in kg in source data) */
+const WEIGHT_KG_KEYS = new Set([
+  "ppWeightKg",
+  "ppMuscleKg",
+  "ppFatKg",
+  "ppProteinKg",
+  "ppBodySkeletalKg",
+]);
+
 /**
  * Calculate percentage change between two values
  */
@@ -24,34 +35,72 @@ function calculatePercentageChange(oldValue, newValue) {
 }
 
 /**
- * Format metric value with unit
+ * Get display name for metric key (never use "pp" in summaries)
  */
-function formatMetricValue(key, value) {
-  if (value === null || value === undefined) return null;
-
-  // Map common units
-  const unitMap = {
-    ppWeightKg: "lb",
-    ppBMI: "",
-    ppHeartRate: "bpm",
-    ppBMR: "kcal",
-    ppMuscleKg: "lb",
-    ppFat: "%",
-    ppBodyScore: "points",
-    ppBodyAge: "years",
-  };
-
-  const unit = unitMap[key] || "";
-  return unit ? `${value} ${unit}` : value.toString();
+function getMetricDisplayName(key) {
+  if (!key || typeof key !== "string") return key;
+  const withoutPp = key.replace(/^pp/, "");
+  // Humanize: ppWeightKg -> Weight (kg), ppHeartRate -> Heart Rate
+  const label = withoutPp
+    .replace(/([A-Z])/g, " $1")
+    .replace(/^./, (s) => s.toUpperCase())
+    .trim();
+  return label;
 }
 
 /**
- * Build metrics comparison text for prompt
+ * Convert a copy of metrics to lbs for weight-related keys (source in kg)
+ */
+function convertMetricsToLbs(metrics) {
+  if (!metrics || typeof metrics !== "object") return metrics;
+  const out = { ...metrics };
+  WEIGHT_KG_KEYS.forEach((k) => {
+    if (out[k] != null && typeof out[k] === "number") {
+      out[k] = Math.round(out[k] * KG_TO_LBS * 10) / 10;
+    }
+  });
+  return out;
+}
+
+/**
+ * Format metric value with unit. unit is 'kg' or 'lbs'.
+ * For weight keys, when unit is 'lbs' the value is already in lbs (caller converted).
+ * Never use "pp" in the metric name (handled by caller using getMetricDisplayName).
+ */
+function formatMetricValue(key, value, unit = "kg") {
+  if (value === null || value === undefined) return null;
+
+  const isLbs = unit === "lbs";
+  if (WEIGHT_KG_KEYS.has(key)) {
+    const rounded = typeof value === "number" ? Math.round(value * 10) / 10 : value;
+    return isLbs ? `${rounded} lb` : `${rounded} kg`;
+  }
+
+  const unitMap = {
+    ppBMI: "",
+    ppHeartRate: "bpm",
+    ppBMR: "kcal",
+    ppFat: "%",
+    ppBodyScore: "points",
+    ppBodyAge: "years",
+    ppMusclePercentage: "%",
+    ppProteinPercentage: "%",
+    ppWaterPercentage: "%",
+  };
+
+  const u = unitMap[key] || "";
+  return u ? `${value} ${u}` : value.toString();
+}
+
+/**
+ * Build metrics comparison text for prompt. Uses display names (no "pp").
+ * unit is 'kg' or 'lbs' for weight-related values.
  */
 function buildMetricsComparisonText(
   currentMetrics,
   twoWeeksAgoMetrics,
-  metricKeys
+  metricKeys,
+  unit = "kg"
 ) {
   let text = "Current metrics (today):\n";
   const changes = [];
@@ -59,19 +108,20 @@ function buildMetricsComparisonText(
   metricKeys.forEach((key) => {
     const current = currentMetrics[key];
     const twoWeeksAgo = twoWeeksAgoMetrics?.[key];
+    const displayName = getMetricDisplayName(key);
 
     if (current !== null && current !== undefined) {
-      text += `- ${key}: ${formatMetricValue(key, current)}`;
+      text += `- ${displayName}: ${formatMetricValue(key, current, unit)}`;
 
       if (twoWeeksAgo !== null && twoWeeksAgo !== undefined) {
         const change = current - twoWeeksAgo;
         const percentChange = calculatePercentageChange(twoWeeksAgo, current);
 
-        text += ` (was ${formatMetricValue(key, twoWeeksAgo)})`;
+        text += ` (was ${formatMetricValue(key, twoWeeksAgo, unit)})`;
 
         if (percentChange !== null) {
           changes.push({
-            key,
+            key: displayName,
             change,
             percentChange: Math.abs(percentChange),
             direction: change > 0 ? "up" : change < 0 ? "down" : "stable",
@@ -95,12 +145,13 @@ function buildMetricsComparisonText(
 }
 
 /**
- * Generate AI summary for a goal card with header and body
+ * Generate AI summary for a goal card with header and body (one unit: kg or lbs)
  * @param {Object} params - Parameters for summary generation
  * @param {string} params.goalName - Name of the goal (e.g., "General Health")
- * @param {Object} params.currentMetrics - Current metric values
+ * @param {Object} params.currentMetrics - Current metric values (in kg for weight keys)
  * @param {Object} params.twoWeeksAgoMetrics - Metrics from two weeks ago (optional)
  * @param {Array} params.metricKeys - Array of metric keys for this goal
+ * @param {'kg'|'lbs'} params.unit - Use 'kg' or 'lbs' for weight-related values in the summary
  * @returns {Promise<Object|null>} Generated summary with header and body or null if failed
  */
 async function generateGoalSummary({
@@ -108,6 +159,7 @@ async function generateGoalSummary({
   currentMetrics,
   twoWeeksAgoMetrics = null,
   metricKeys,
+  unit = "kg",
 }) {
   if (!openai) {
     console.log("⚠️  OpenAI not configured - skipping summary generation");
@@ -115,28 +167,51 @@ async function generateGoalSummary({
   }
 
   try {
+    const metricsForUnit =
+      unit === "lbs"
+        ? {
+            current: convertMetricsToLbs(currentMetrics),
+            twoWeeksAgo: twoWeeksAgoMetrics
+              ? convertMetricsToLbs(twoWeeksAgoMetrics)
+              : null,
+          }
+        : {
+            current: currentMetrics,
+            twoWeeksAgo: twoWeeksAgoMetrics,
+          };
+
     const metricsText = buildMetricsComparisonText(
-      currentMetrics,
-      twoWeeksAgoMetrics,
-      metricKeys
+      metricsForUnit.current,
+      metricsForUnit.twoWeeksAgo,
+      metricKeys,
+      unit
     );
+
+    const weightUnitInstruction =
+      unit === "lbs"
+        ? "Use only pounds (lb/lbs) for all weight-related values in the summary."
+        : "Use only kilograms (kg) for all weight-related values in the summary.";
 
     const prompt = `You are a health and wellness coach. Generate a summary for the "${goalName}" goal card based on body composition metrics from the last two weeks.
 
 ${metricsText}
+
+RULES:
+- Never use "pp" in front of any metric name. Use plain names only: Weight, BMI, Heart Rate, BMR, Muscle, Fat, etc.
+- ${weightUnitInstruction}
 
 Generate a summary with:
 1. HEADER: A short, encouraging header (25-35 characters including spaces). Examples: "Your overall trends this week", "Recovery score on the rise", "Daily energy adapting well"
 
 2. BODY: A 2-line summary (160-190 characters total, or up to 220-240 if 3 lines needed) that:
    - Reviews trends over the last two weeks
-   - Uses specific numbers with units (lbs, %, bpm, kcal, points, etc.)
+   - Uses specific numbers with units (${unit === "lbs" ? "lb/lbs" : "kg"}, %, bpm, kcal, points, etc.) — never use "pp" before any metric
    - Celebrates wins and improvements
    - Encourages on areas needing attention
    - Contextualizes why changes relate to the goal
    - Mentions "over the last two weeks" or "in the past two weeks"
    - Focuses on well-known metrics but doesn't ignore lesser-known ones
-   - Uses percentage changes and quantity changes (e.g., "by about X lb (Y%)")
+   - Uses percentage changes and quantity changes (e.g., "by about X ${unit === "lbs" ? "lb" : "kg"} (Y%)")
 
 Format your response as JSON:
 {
@@ -324,18 +399,33 @@ async function generateAllGoalSummaries(
     },
   ];
 
-  // Generate summaries for each goal
-  for (const config of goalConfigs) {
-    const summary = await generateGoalSummary({
-      goalName: config.name,
-      currentMetrics,
-      twoWeeksAgoMetrics,
-      metricKeys: config.keys,
-    });
+  const defaultSummary = {
+    header: "Tracking progress",
+    body: "Progress tracking in progress...",
+  };
 
-    summaries[config.name] = summary || {
-      header: "Tracking progress",
-      body: "Progress tracking in progress...",
+  // Generate summaries for each goal: one in kg, one in lbs
+  for (const config of goalConfigs) {
+    const [summaryKg, summaryLbs] = await Promise.all([
+      generateGoalSummary({
+        goalName: config.name,
+        currentMetrics,
+        twoWeeksAgoMetrics,
+        metricKeys: config.keys,
+        unit: "kg",
+      }),
+      generateGoalSummary({
+        goalName: config.name,
+        currentMetrics,
+        twoWeeksAgoMetrics,
+        metricKeys: config.keys,
+        unit: "lbs",
+      }),
+    ]);
+
+    summaries[config.name] = {
+      kg: summaryKg || defaultSummary,
+      lbs: summaryLbs || defaultSummary,
     };
   }
 
