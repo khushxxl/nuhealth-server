@@ -264,11 +264,12 @@ function applyCorrection(bodyData, heightCm, weightKg, sex, userBodyType) {
   }
 
   const allowedBuckets = ["athlete_very_lean", "lean", "normal", "overweight"];
+  const normalized =
+    userBodyType && String(userBodyType).trim()
+      ? String(userBodyType).toLowerCase().replace(/\s/g, "_")
+      : null;
   const bucket =
-    userBodyType &&
-    allowedBuckets.includes(userBodyType.toLowerCase().replace(/\s/g, "_"))
-      ? userBodyType.toLowerCase().replace(/\s/g, "_")
-      : classify(metrics, sex);
+    normalized && allowedBuckets.includes(normalized) ? normalized : "normal";
   result.bucket = bucket;
 
   const adjustment = BF_ADJUSTMENT[bucket] ?? 0;

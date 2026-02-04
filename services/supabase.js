@@ -15,6 +15,35 @@ if (SUPABASE_URL && SUPABASE_ANON_KEY) {
   );
 }
 
+/** Round numeric value to 2 decimal places for consistent storage in scale_records. */
+function roundTo2(val) {
+  if (val === null || val === undefined) return val;
+  const num = Number(val);
+  return Number.isFinite(num) ? Math.round(num * 100) / 100 : val;
+}
+
+/**
+ * Round all currentValue/current_value in a body data array to 2 dp (returns new array).
+ */
+function roundBodyDataValues(bodyData) {
+  if (!Array.isArray(bodyData)) return bodyData;
+  return bodyData.map((item) => {
+    if (!item || typeof item !== "object") return item;
+    const out = { ...item };
+    const val = out.currentValue ?? out.current_value;
+    if (val !== null && val !== undefined) {
+      const rounded = roundTo2(val);
+      if (typeof rounded === "number") {
+        if ("currentValue" in out) out.currentValue = rounded;
+        if ("current_value" in out) out.current_value = rounded;
+        if (!("currentValue" in out) && !("current_value" in out))
+          out.currentValue = rounded;
+      }
+    }
+    return out;
+  });
+}
+
 /**
  * Map lefuBodyData item to scale_measurements format
  * @param {Object} bodyDataItem - A single item from lefuBodyData array
@@ -26,11 +55,11 @@ function mapBodyDataToMeasurement(bodyDataItem) {
     return bodyDataItem[camelKey] ?? bodyDataItem[snakeKey] ?? null;
   };
 
-  // Helper to convert value to numeric if possible
+  // Helper to convert value to numeric if possible (rounded to 2 dp for storage)
   const toNumeric = (val) => {
     if (val === null || val === undefined) return null;
     const num = parseFloat(val);
-    return isNaN(num) ? null : num;
+    return isNaN(num) ? null : roundTo2(num);
   };
 
   // Helper to convert value to text if not numeric
@@ -97,10 +126,12 @@ async function saveRecordToSupabase(
     // Extract scale_user_id from recordData (could be at root level or in data)
     const scaleUserId = recordData.scaleUserId || data.scaleUserId || null;
 
-    // Raw Lefu response stays in lefu_body_data; mutated in mutated_response
+    // Raw Lefu response stays in lefu_body_data (original, unrounded)
     const rawBodyData = rawLefuBodyData ?? data.lefuBodyData ?? [];
-    const mutatedData =
-      mutatedBodyData != null ? mutatedBodyData : rawBodyData;
+    // mutated_response: round to 2 dp for consistent storage
+    const mutatedData = roundBodyDataValues(
+      mutatedBodyData != null ? mutatedBodyData : rawBodyData,
+    );
 
     // Prepare the record for insertion
     const recordToInsert = {
