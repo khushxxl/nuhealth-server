@@ -43,16 +43,17 @@ async function handleRecord(req, res) {
       const saveResult = await saveRecordToSupabase(
         recordData,
         processResult.bodyData,
+        processResult.mutatedBodyData,
       );
       if (saveResult.success) {
         console.log("✅ Data saved successfully");
 
-        // Generate and save AI summaries for goal cards
-        if (saveResult.recordId && processResult.bodyData) {
+        // Generate and save AI summaries for goal cards (use mutated values)
+        if (saveResult.recordId && processResult.mutatedBodyData) {
           console.log("🤖 Generating AI summaries for goal cards...");
           try {
             const summaries = await generateSummariesForRecord(
-              processResult.bodyData,
+              processResult.mutatedBodyData,
               userId,
               saveResult.recordId,
             );

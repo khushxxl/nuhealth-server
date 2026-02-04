@@ -69,10 +69,15 @@ function mapBodyDataToMeasurement(bodyDataItem) {
 /**
  * Save record data to Supabase
  * @param {Object} recordData - The record data to save
- * @param {Array} lefuBodyData - Optional body data from Lefu API
+ * @param {Array} [rawLefuBodyData] - Raw body data from Lefu API (stored in lefu_body_data)
+ * @param {Array} [mutatedBodyData] - BIYO-corrected body data (stored in mutated_response; used for scale_measurements)
  * @returns {Promise<Object>} Result object with success status
  */
-async function saveRecordToSupabase(recordData, lefuBodyData = null) {
+async function saveRecordToSupabase(
+  recordData,
+  rawLefuBodyData = null,
+  mutatedBodyData = null,
+) {
   if (!supabase) {
     console.log("⚠️  Supabase not configured - skipping database save");
     return { success: false, error: "Supabase not configured" };
@@ -92,8 +97,10 @@ async function saveRecordToSupabase(recordData, lefuBodyData = null) {
     // Extract scale_user_id from recordData (could be at root level or in data)
     const scaleUserId = recordData.scaleUserId || data.scaleUserId || null;
 
-    // Use lefuBodyData from API if provided, otherwise use from recordData
-    const bodyData = lefuBodyData || data.lefuBodyData || [];
+    // Raw Lefu response stays in lefu_body_data; mutated in mutated_response
+    const rawBodyData = rawLefuBodyData ?? data.lefuBodyData ?? [];
+    const mutatedData =
+      mutatedBodyData != null ? mutatedBodyData : rawBodyData;
 
     // Prepare the record for insertion
     const recordToInsert = {
@@ -101,7 +108,8 @@ async function saveRecordToSupabase(recordData, lefuBodyData = null) {
       msg: msg || null,
       version: version || null,
       error_type: errorType || null,
-      lefu_body_data: bodyData,
+      lefu_body_data: rawBodyData,
+      mutated_response: mutatedData,
       full_data: recordData, // Store complete data as JSONB for reference
       scale_user_id: scaleUserId,
     };
@@ -128,14 +136,14 @@ async function saveRecordToSupabase(recordData, lefuBodyData = null) {
     // Return early with record ID so summaries can be generated and updated
     const result = { success: true, data: insertedData[0], recordId };
 
-    // Now save individual measurements to scale_measurements table
-    if (Array.isArray(bodyData) && bodyData.length > 0) {
+    // Now save individual measurements to scale_measurements (use mutated values)
+    if (Array.isArray(mutatedData) && mutatedData.length > 0) {
       console.log(
-        `💾 Saving ${bodyData.length} measurements to scale_measurements...`,
+        `💾 Saving ${mutatedData.length} measurements to scale_measurements (mutated)...`,
       );
 
       // Filter and map body data items, only including those with body_param_key (required field)
-      const measurementsToInsert = bodyData
+      const measurementsToInsert = mutatedData
         .filter(
           (item) =>
             item &&
@@ -203,7 +211,7 @@ async function getUserProfile(userId) {
     console.log(`👤 Fetching user profile for user ID: ${userId}`);
     const { data, error } = await supabase
       .from("users")
-      .select("age, height, gender")
+      .select("age, height, gender, user_body_type")
       .eq("id", userId)
       .single();
 
@@ -228,6 +236,7 @@ async function getUserProfile(userId) {
         age: data.age,
         height: data.height,
         gender: data.gender,
+        user_body_type: data.user_body_type ?? null,
       },
     };
   } catch (err) {

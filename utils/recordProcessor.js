@@ -1,5 +1,6 @@
 const { mapImpedanceArray, fetchLefuBodyData } = require("../services/lefu");
 const { getUserProfile } = require("../services/supabase");
+const { applyCorrection } = require("./biyoCorrection");
 
 /**
  * Extract parameters from request and fetch body data from Lefu API
@@ -80,6 +81,8 @@ async function processRecordData(reqBody) {
       reqBody.userid ||
       null;
 
+    let profileForBiyo = null;
+
     // Debug logging for extracted parameters from request
     console.log("📊 Extracted Parameters from Request:");
     console.log(`   User ID: ${userId || "(MISSING)"}`);
@@ -107,6 +110,7 @@ async function processRecordData(reqBody) {
 
       if (profileResult.success && profileResult.profile) {
         const profile = profileResult.profile;
+        profileForBiyo = profile;
 
         // Only use profile data if request didn't provide it
         if (age === undefined && profile.age !== null) {
@@ -138,7 +142,9 @@ async function processRecordData(reqBody) {
         }
       } else {
         console.log(
-          `   ⚠️  Could not fetch user profile: ${profileResult.error || "Unknown error"}`,
+          `   ⚠️  Could not fetch user profile: ${
+            profileResult.error || "Unknown error"
+          }`,
         );
       }
     }
@@ -198,7 +204,9 @@ async function processRecordData(reqBody) {
     console.log(`   Sex: ${sex} ${sex === undefined ? "❌ MISSING" : "✅"}`);
     console.log(`   Product: ${apiParams.product} ✅`);
     console.log(
-      `   Impedance values: ${Object.keys(impedanceParams).length} parameters ✅`,
+      `   Impedance values: ${
+        Object.keys(impedanceParams).length
+      } parameters ✅`,
     );
 
     // Fetch body data from Lefu API
@@ -209,7 +217,53 @@ async function processRecordData(reqBody) {
       console.log(
         `✅ Extracted ${bodyData.length} body data items from API response`,
       );
-      return { success: true, bodyData: bodyData };
+
+      // BIYO correction: classify, adjust BF%, rebalance FFM components
+      let mutatedBodyData = bodyData;
+      const weightNum =
+        weightKg != null && weightKg !== ""
+          ? Number(weightKg)
+          : null;
+      const heightNumForBiyo = Number(height);
+      const sexNum =
+        sex !== undefined && sex !== null && sex !== ""
+          ? Number(sex)
+          : null;
+      if (
+        Array.isArray(bodyData) &&
+        bodyData.length > 0 &&
+        Number.isFinite(weightNum) &&
+        weightNum > 0 &&
+        Number.isFinite(heightNumForBiyo) &&
+        heightNumForBiyo > 0 &&
+        (sexNum === 1 || sexNum === 2)
+      ) {
+        let userBodyType = profileForBiyo?.user_body_type ?? null;
+        if (userId && profileForBiyo == null) {
+          const profileResult = await getUserProfile(userId);
+          if (profileResult.success && profileResult.profile)
+            userBodyType = profileResult.profile.user_body_type ?? null;
+        }
+        const biyo = applyCorrection(
+          bodyData,
+          heightNumForBiyo,
+          weightNum,
+          sexNum,
+          userBodyType,
+        );
+        mutatedBodyData = biyo.mutatedBodyData;
+        if (biyo.applied) {
+          console.log(
+            `   BIYO correction applied: bucket=${biyo.bucket}, BF% corrected to ${biyo.bfCorrected?.toFixed(1)}%`,
+          );
+        }
+      }
+
+      return {
+        success: true,
+        bodyData,
+        mutatedBodyData,
+      };
     } else {
       console.error("❌ Failed to extract body data from API response");
       return {
