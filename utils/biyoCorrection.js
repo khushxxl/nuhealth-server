@@ -33,8 +33,15 @@ function getCurrentValue(item) {
   return Number.isFinite(num) ? num : null;
 }
 
-function setCurrentValue(item, value) {
+/** Round to 2 decimal places to avoid saving long floats (e.g. 15.93000000000000). */
+function roundTo2(value) {
   const num = Number(value);
+  if (!Number.isFinite(num)) return num;
+  return Math.round(num * 100) / 100;
+}
+
+function setCurrentValue(item, value) {
+  const num = roundTo2(value);
   if ("currentValue" in item) item.currentValue = num;
   if ("current_value" in item) item.current_value = num;
   if (!("currentValue" in item) && !("current_value" in item))
@@ -285,7 +292,8 @@ function applyCorrection(bodyData, heightCm, weightKg, sex, userBodyType) {
   result.applied = true;
 
   // Mutation logs: raw → classification → adjustment → per-role counts
-  const bfRawVal = bfRaw ?? (fatMassOld != null ? (fatMassOld / weight) * 100 : null);
+  const bfRawVal =
+    bfRaw ?? (fatMassOld != null ? (fatMassOld / weight) * 100 : null);
   console.log("🔄 BIYO mutation: raw metrics", {
     weight_kg: weight,
     bf_pct_raw: bfRawVal != null ? bfRawVal.toFixed(2) : null,
