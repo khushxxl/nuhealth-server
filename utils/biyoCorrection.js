@@ -53,9 +53,10 @@ function getItemRole(paramKey) {
   const k = normalizeKey(paramKey);
   if (!k) return null;
   if (PARAM_KEY_PATTERNS.weight.some((p) => k.includes(p))) return "weight";
+  // Check fatMass before bodyFatPct so ppBodyfatKg matches fatMass (not bodyFatPct)
+  if (PARAM_KEY_PATTERNS.fatMass.some((p) => k.includes(p))) return "fatMass";
   if (PARAM_KEY_PATTERNS.bodyFatPct.some((p) => k.includes(p)))
     return "bodyFatPct";
-  if (PARAM_KEY_PATTERNS.fatMass.some((p) => k.includes(p))) return "fatMass";
   if (PARAM_KEY_PATTERNS.ffm.some((p) => k.includes(p))) return "ffm";
   if (PARAM_KEY_PATTERNS.visceral.some((p) => k.includes(p))) return "visceral";
   if (PARAM_KEY_PATTERNS.muscleMass.some((p) => k.includes(p)))
@@ -271,6 +272,7 @@ function applyCorrection(bodyData, heightCm, weightKg, sex, userBodyType) {
   const ffmOld = metrics.ffm;
 
   if (weight == null || weight <= 0 || (bfRaw == null && fatMassOld == null)) {
+    console.log("🔄 BIYO mutation: skipped (missing weight or BF/fatMass)");
     return result;
   }
 
@@ -294,10 +296,33 @@ function applyCorrection(bodyData, heightCm, weightKg, sex, userBodyType) {
   const ffmNew = weight - fatMassNew;
   const ffmOldVal =
     ffmOld ?? weight - fatMassOld ?? weight - (weight * (bfRaw ?? 0)) / 100;
-  if (ffmOldVal == null || ffmOldVal <= 0) return result;
+  if (ffmOldVal == null || ffmOldVal <= 0) {
+    console.log("🔄 BIYO mutation: skipped (invalid FFM_old)");
+    return result;
+  }
 
   const k = ffmNew / ffmOldVal;
   result.applied = true;
+
+  // Mutation logs: raw → classification → adjustment → per-role counts
+  const bfRawVal = bfRaw ?? (fatMassOld != null ? (fatMassOld / weight) * 100 : null);
+  console.log("🔄 BIYO mutation: raw metrics", {
+    weight_kg: weight,
+    bf_pct_raw: bfRawVal != null ? bfRawVal.toFixed(2) : null,
+    fat_mass_kg_raw: fatMassOld != null ? fatMassOld.toFixed(2) : null,
+    ffm_kg_raw: ffmOldVal != null ? ffmOldVal.toFixed(2) : null,
+    bucket,
+    user_body_type_override: userBodyType ?? "(none)",
+  });
+  console.log("🔄 BIYO mutation: adjustment", {
+    adjustment_pct: adjustment,
+    bf_pct_corrected: bfCorrected.toFixed(2),
+    fat_mass_kg_new: fatMassNew.toFixed(2),
+    ffm_kg_new: ffmNew.toFixed(2),
+    scaling_factor_k: Number(k.toFixed(4)),
+  });
+
+  const mutationCounts = { bodyFatPct: 0, fatMass: 0, ffm: 0, ffmComponent: 0 };
 
   for (const item of result.mutatedBodyData) {
     const key = getParamKey(item);
@@ -311,12 +336,15 @@ function applyCorrection(bodyData, heightCm, weightKg, sex, userBodyType) {
         break;
       case "bodyFatPct":
         setCurrentValue(item, bfCorrected);
+        mutationCounts.bodyFatPct++;
         break;
       case "fatMass":
         setCurrentValue(item, fatMassNew);
+        mutationCounts.fatMass++;
         break;
       case "ffm":
         setCurrentValue(item, ffmNew);
+        mutationCounts.ffm++;
         break;
       case "visceral":
         // leave as-is (level 1-60, not a mass)
@@ -324,11 +352,14 @@ function applyCorrection(bodyData, heightCm, weightKg, sex, userBodyType) {
       case "muscleMass":
       case "ffmComponent":
         setCurrentValue(item, val * k);
+        mutationCounts.ffmComponent++;
         break;
       default:
         break;
     }
   }
+
+  console.log("🔄 BIYO mutation: applied", mutationCounts);
 
   return result;
 }

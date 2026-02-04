@@ -24,22 +24,75 @@ const MAX_DAILY_BF_CHANGE = 1.0;
 
 /**
  * Param key patterns: item is treated as this role if bodyParamKey matches (includes) any pattern.
- * Order matters for disambiguation (e.g. check 'fatmass' before 'fat').
+ * Order in getItemRole: fatMass before bodyFatPct so e.g. ppBodyfatKg matches fatMass not bodyFatPct.
+ * Lefu keys from API: ppWeightKg, ppFat (BF%), ppBodyfatKg (fat mass), ppLoseFatWeightKg (FFM), etc.
  */
 const PARAM_KEY_PATTERNS = {
   weight: ["weight", "weightkg", "ppweight"],
-  bodyFatPct: ["bodyfat", "body_fat", "bfpct", "fatpct", "ppbodyfat", "bf_percent"],
-  fatMass: ["fatmass", "fat_mass", "ppfatmass"],
-  ffm: ["ffm", "fatfreemass", "fat_free_mass", "ppffm"],
-  muscleMass: ["muscle", "skeletal", "musclemass", "skeletalmuscle", "ppmuscle", "ppmusclemass"],
+  bodyFatPct: [
+    "bodyfat",
+    "body_fat",
+    "bfpct",
+    "fatpct",
+    "ppbodyfat",
+    "ppfat",
+    "bf_percent",
+  ],
+  fatMass: ["fatmass", "fat_mass", "ppfatmass", "bodyfatkg", "ppbodyfatkg"],
+  ffm: [
+    "ffm",
+    "fatfreemass",
+    "fat_free_mass",
+    "ppffm",
+    "losefat",
+    "pplosefatweightkg",
+  ],
+  muscleMass: [
+    "muscle",
+    "skeletal",
+    "musclemass",
+    "skeletalmuscle",
+    "ppmuscle",
+    "ppmusclekg",
+    "ppbodyskeletalkg",
+  ],
   visceral: ["visceral", "visceralfat", "ppvisceral"],
   // FFM components (scaled by k)
-  tbw: ["tbw", "water", "bodywater", "totalbodywater", "pptbw"],
-  protein: ["protein", "ppprotein"],
-  mineral: ["mineral", "bone", "ppmineral", "ppbone"],
+  tbw: [
+    "tbw",
+    "water",
+    "bodywater",
+    "totalbodywater",
+    "pptbw",
+    "ppwaterkg",
+    "ppwatericwkg",
+    "ppwaterecwkg",
+  ],
+  protein: ["protein", "ppprotein", "ppproteinkg"],
+  mineral: [
+    "mineral",
+    "bone",
+    "ppmineral",
+    "ppbone",
+    "ppmineralkg",
+    "ppbonekg",
+  ],
   bmr: ["bmr", "basal", "ppbmr"],
   // Segmental lean (arms, legs, trunk)
-  segmentalLean: ["arm", "leg", "trunk", "segmental", "leanarm", "leanleg", "leantrunk"],
+  segmentalLean: [
+    "arm",
+    "leg",
+    "trunk",
+    "segmental",
+    "leanarm",
+    "leanleg",
+    "leantrunk",
+    "ppmusclekgtrunk",
+    "ppmusclekgleftarm",
+    "ppmusclekgrightarm",
+    "ppmusclekgleftleg",
+    "ppmusclekgrightleg",
+  ],
 };
 
 module.exports = {
