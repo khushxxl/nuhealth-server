@@ -8,7 +8,7 @@ const {
   BF_ADJUSTMENT,
   BF_BOUNDS,
   MAX_DAILY_BF_CHANGE,
-  PARAM_KEY_PATTERNS,
+  BIYO_EXACT_KEYS,
 } = require("../config/biyoConfig");
 
 function getParamKey(item) {
@@ -41,34 +41,17 @@ function setCurrentValue(item, value) {
     item.currentValue = num;
 }
 
-/** Normalize key for matching (lowercase, no spaces) */
-function normalizeKey(key) {
-  return String(key || "")
-    .toLowerCase()
-    .replace(/\s/g, "");
-}
-
-/** Determine the role of a body data item from its param key */
+/** Determine the role of a body data item from its param key (exact match only). */
 function getItemRole(paramKey) {
-  const k = normalizeKey(paramKey);
-  if (!k) return null;
-  if (PARAM_KEY_PATTERNS.weight.some((p) => k.includes(p))) return "weight";
-  // Check fatMass before bodyFatPct so ppBodyfatKg matches fatMass (not bodyFatPct)
-  if (PARAM_KEY_PATTERNS.fatMass.some((p) => k.includes(p))) return "fatMass";
-  if (PARAM_KEY_PATTERNS.bodyFatPct.some((p) => k.includes(p)))
-    return "bodyFatPct";
-  if (PARAM_KEY_PATTERNS.ffm.some((p) => k.includes(p))) return "ffm";
-  if (PARAM_KEY_PATTERNS.visceral.some((p) => k.includes(p))) return "visceral";
-  if (PARAM_KEY_PATTERNS.muscleMass.some((p) => k.includes(p)))
-    return "muscleMass";
-  if (PARAM_KEY_PATTERNS.tbw.some((p) => k.includes(p))) return "ffmComponent";
-  if (PARAM_KEY_PATTERNS.protein.some((p) => k.includes(p)))
-    return "ffmComponent";
-  if (PARAM_KEY_PATTERNS.mineral.some((p) => k.includes(p)))
-    return "ffmComponent";
-  if (PARAM_KEY_PATTERNS.bmr.some((p) => k.includes(p))) return "ffmComponent";
-  if (PARAM_KEY_PATTERNS.segmentalLean.some((p) => k.includes(p)))
-    return "ffmComponent";
+  const key = paramKey != null ? String(paramKey).trim() : "";
+  if (!key) return null;
+  if (BIYO_EXACT_KEYS.weight.includes(key)) return "weight";
+  if (BIYO_EXACT_KEYS.fatMass.includes(key)) return "fatMass";
+  if (BIYO_EXACT_KEYS.bodyFatPct.includes(key)) return "bodyFatPct";
+  if (BIYO_EXACT_KEYS.ffm.includes(key)) return "ffm";
+  if (BIYO_EXACT_KEYS.visceral.includes(key)) return "visceral";
+  if (BIYO_EXACT_KEYS.muscleMass.includes(key)) return "muscleMass";
+  if (BIYO_EXACT_KEYS.ffmComponent.includes(key)) return "ffmComponent";
   return null;
 }
 
@@ -118,8 +101,6 @@ function extractMetrics(bodyData, weightKg, heightCm) {
         out.muscleMass = out.muscleMass ?? val;
         break;
       case "ffmComponent":
-        if (normalizeKey(key).includes("muscle"))
-          out.muscleMass = out.muscleMass ?? val;
         break;
       case "visceral":
         out.visceral = val;
@@ -144,8 +125,7 @@ function extractMetrics(bodyData, weightKg, heightCm) {
   if (out.muscleMass === null && out.ffm !== null) {
     for (const item of bodyData) {
       const key = getParamKey(item);
-      const k = normalizeKey(key);
-      if (PARAM_KEY_PATTERNS.muscleMass.some((p) => k.includes(p))) {
+      if (BIYO_EXACT_KEYS.muscleMass.includes(key)) {
         out.muscleMass = getCurrentValue(item);
         break;
       }

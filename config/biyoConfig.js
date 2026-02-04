@@ -1,7 +1,6 @@
 /**
  * BIYO Body Fat Correction - config for classification and param key mapping.
- * Lefu API may use camelCase or snake_case; keys are matched case-insensitively.
- * Update paramKeyPatterns if your API returns different field names.
+ * Uses exact bodyParamKey values from Lefu API (no pattern matching).
  */
 
 // Body fat % adjustment by bucket (delta to add to raw BF%)
@@ -23,75 +22,36 @@ const BF_BOUNDS = {
 const MAX_DAILY_BF_CHANGE = 1.0;
 
 /**
- * Param key patterns: item is treated as this role if bodyParamKey matches (includes) any pattern.
- * Order in getItemRole: fatMass before bodyFatPct so e.g. ppBodyfatKg matches fatMass not bodyFatPct.
- * Lefu keys from API: ppWeightKg, ppFat (BF%), ppBodyfatKg (fat mass), ppLoseFatWeightKg (FFM), etc.
+ * Exact bodyParamKey values per role. Only these keys are read/mutated.
+ * Global BF% is ppFat only (excludes segmental/ratio keys like ppBodyFatRateTrunk).
  */
-const PARAM_KEY_PATTERNS = {
-  weight: ["weight", "weightkg", "ppweight"],
-  bodyFatPct: [
-    "bodyfat",
-    "body_fat",
-    "bfpct",
-    "fatpct",
-    "ppbodyfat",
-    "ppfat",
-    "bf_percent",
-  ],
-  fatMass: ["fatmass", "fat_mass", "ppfatmass", "bodyfatkg", "ppbodyfatkg"],
-  ffm: [
-    "ffm",
-    "fatfreemass",
-    "fat_free_mass",
-    "ppffm",
-    "losefat",
-    "pplosefatweightkg",
-  ],
-  muscleMass: [
-    "muscle",
-    "skeletal",
-    "musclemass",
-    "skeletalmuscle",
-    "ppmuscle",
-    "ppmusclekg",
-    "ppbodyskeletalkg",
-  ],
-  visceral: ["visceral", "visceralfat", "ppvisceral"],
-  // FFM components (scaled by k)
-  tbw: [
-    "tbw",
-    "water",
-    "bodywater",
-    "totalbodywater",
-    "pptbw",
-    "ppwaterkg",
-    "ppwatericwkg",
-    "ppwaterecwkg",
-  ],
-  protein: ["protein", "ppprotein", "ppproteinkg"],
-  mineral: [
-    "mineral",
-    "bone",
-    "ppmineral",
-    "ppbone",
-    "ppmineralkg",
-    "ppbonekg",
-  ],
-  bmr: ["bmr", "basal", "ppbmr"],
-  // Segmental lean (arms, legs, trunk)
-  segmentalLean: [
-    "arm",
-    "leg",
-    "trunk",
-    "segmental",
-    "leanarm",
-    "leanleg",
-    "leantrunk",
-    "ppmusclekgtrunk",
-    "ppmusclekgleftarm",
-    "ppmusclekgrightarm",
-    "ppmusclekgleftleg",
-    "ppmusclekgrightleg",
+const BIYO_EXACT_KEYS = {
+  weight: ["ppWeightKg"],
+  bodyFatPct: ["ppFat"],
+  fatMass: ["ppBodyfatKg"],
+  ffm: ["ppLoseFatWeightKg"],
+  visceral: ["ppVisceralFat"],
+  muscleMass: ["ppMuscleKg", "ppBodySkeletalKg"],
+  ffmComponent: [
+    "ppWaterKg",
+    "ppWaterICWKg",
+    "ppWaterECWKg",
+    "ppProteinKg",
+    "ppMineralKg",
+    "ppBoneKg",
+    "ppBMR",
+    "ppMuscleKgTrunk",
+    "ppMuscleKgLeftArm",
+    "ppMuscleKgRightArm",
+    "ppMuscleKgLeftLeg",
+    "ppMuscleKgRightLeg",
+    "ppBodySkeletal",
+    "ppMusclePercentage",
+    "ppProteinPercentage",
+    "ppWaterPercentage",
+    "ppCellMassKg",
+    "ppMuscleKg",
+    "ppBodySkeletalKg",
   ],
 };
 
@@ -99,5 +59,5 @@ module.exports = {
   BF_ADJUSTMENT,
   BF_BOUNDS,
   MAX_DAILY_BF_CHANGE,
-  PARAM_KEY_PATTERNS,
+  BIYO_EXACT_KEYS,
 };
