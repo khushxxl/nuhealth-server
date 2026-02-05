@@ -183,13 +183,16 @@ async function processRecordData(reqBody) {
     // Map impedance array to API parameters
     const impedanceParams = mapImpedanceArray(impedanceArray);
 
+    // Lefu API uses gender: 0 = female, 1 = male. We use sex: 1 = male, 2 = female.
+    const sexForLefu = sex === 1 ? 1 : sex === 2 ? 0 : sex;
+
     // Build API request parameters using extracted values
     const apiParams = {
       ...impedanceParams,
       age: age,
       height: height,
       weightKg: weightKg,
-      sex: sex,
+      sex: sexForLefu,
       product: product || 5,
     };
 
@@ -221,14 +224,10 @@ async function processRecordData(reqBody) {
       // BIYO correction: classify, adjust BF%, rebalance FFM components
       let mutatedBodyData = bodyData;
       const weightNum =
-        weightKg != null && weightKg !== ""
-          ? Number(weightKg)
-          : null;
+        weightKg != null && weightKg !== "" ? Number(weightKg) : null;
       const heightNumForBiyo = Number(height);
       const sexNum =
-        sex !== undefined && sex !== null && sex !== ""
-          ? Number(sex)
-          : null;
+        sex !== undefined && sex !== null && sex !== "" ? Number(sex) : null;
       if (
         Array.isArray(bodyData) &&
         bodyData.length > 0 &&
