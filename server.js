@@ -11,6 +11,7 @@ const {
 } = require("./middleware/errorHandler");
 const deviceRoutes = require("./routes/device");
 const recordRoutes = require("./routes/record");
+const impedanceRoutes = require("./routes/impedance");
 const { getSupabaseClient } = require("./services/supabase");
 const { OPENAI_API_KEY } = require("./config/constants");
 
@@ -254,6 +255,9 @@ app.post("/devices/claim/lefu/wifi/torre/config", (req, res) => {
 // Mount record routes (handles /devices/claim/lefu/wifi/torre/record and /lefu/wifi/torre/record)
 app.use("/", recordRoutes);
 
+// Mount manual impedance submission route
+app.use("/", impedanceRoutes);
+
 // Root path endpoints (for testing without /devices/claim prefix)
 app.post("/lefu/wifi/torre/register", (req, res) => {
   console.log("🔧 Torre Device Registration (root path)");
@@ -455,6 +459,7 @@ app.listen(PORT, "0.0.0.0", () => {
   console.log(
     `   POST /unique-scale/lefu/wifi/torre/config - Wi-Fi provisioning configuration`
   );
+  console.log(`\n   POST /api/impedance - Manual impedance submission`);
   console.log(`\n   GET /ota/:filename - OTA firmware file download`);
   console.log(`\n✅ Server ready - waiting for scale connections...\n`);
 });
