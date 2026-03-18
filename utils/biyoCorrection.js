@@ -348,6 +348,18 @@ function applyCorrection(bodyData, heightCm, weightKg, sex, userBodyType) {
     }
   }
 
+  // Clamp health score to 0-100 range (Lefu API can return values > 100)
+  for (const item of result.mutatedBodyData) {
+    const key = getParamKey(item);
+    if (key === "ppBodyScore") {
+      const val = getCurrentValue(item);
+      if (val !== null && val > 100) {
+        setCurrentValue(item, 100);
+        console.log(`🔄 BIYO mutation: clamped ppBodyScore from ${val} to 100`);
+      }
+    }
+  }
+
   console.log("🔄 BIYO mutation: applied", mutationCounts);
 
   return result;

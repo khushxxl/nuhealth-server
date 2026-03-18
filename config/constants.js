@@ -1,5 +1,5 @@
 module.exports = {
-  PORT: process.env.PORT || 8000,
+  PORT: process.env.PORT || 9000,
 
   // Server base URL for OTA downloads (leave empty to auto-detect from request)
   // For localhost: "http://192.168.0.206:8000" (use your local IP)
@@ -14,6 +14,7 @@ module.exports = {
   // Supabase configuration
   SUPABASE_URL: process.env.SUPABASE_URL,
   SUPABASE_ANON_KEY: process.env.SUPABASE_ANON_KEY,
+  SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY,
 
   // OpenAI configuration
   OPENAI_API_KEY: process.env.OPEN_AI_API,

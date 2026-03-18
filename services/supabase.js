@@ -1,17 +1,32 @@
 const { createClient } = require("@supabase/supabase-js");
-const { SUPABASE_URL, SUPABASE_ANON_KEY } = require("../config/constants");
+const {
+  SUPABASE_URL,
+  SUPABASE_ANON_KEY,
+  SUPABASE_SERVICE_ROLE_KEY,
+} = require("../config/constants");
 
-// Initialize Supabase client
+// Initialize Supabase client (anon key - for existing IoT routes)
 let supabase = null;
 if (SUPABASE_URL && SUPABASE_ANON_KEY) {
   supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-  console.log("✅ Supabase client initialized");
+  console.log("✅ Supabase client initialized (anon)");
 } else {
   console.log(
     "⚠️  Supabase credentials not found - data will not be saved to database",
   );
   console.log(
     "   Set SUPABASE_URL and SUPABASE_ANON_KEY environment variables",
+  );
+}
+
+// Initialize Supabase service role client (bypasses RLS for server-side API routes)
+let serviceClient = null;
+if (SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY) {
+  serviceClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+  console.log("✅ Supabase service role client initialized");
+} else {
+  console.log(
+    "⚠️  Supabase service role key not found - API routes will use anon client as fallback",
   );
 }
 
@@ -242,7 +257,7 @@ async function getUserProfile(userId) {
     console.log(`👤 Fetching user profile for user ID: ${userId}`);
     const { data, error } = await supabase
       .from("users")
-      .select("age, height, gender, user_body_type")
+      .select("age, height, gender, user_body_type, notification_id")
       .eq("id", userId)
       .single();
 
@@ -268,6 +283,7 @@ async function getUserProfile(userId) {
         height: data.height,
         gender: data.gender,
         user_body_type: data.user_body_type ?? null,
+        notification_id: data.notification_id ?? null,
       },
     };
   } catch (err) {
@@ -312,4 +328,5 @@ module.exports = {
   updateGoalSummaries,
   getUserProfile,
   getSupabaseClient: () => supabase,
+  getServiceClient: () => serviceClient || supabase,
 };

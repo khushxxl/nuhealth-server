@@ -12,6 +12,14 @@ const {
 const deviceRoutes = require("./routes/device");
 const recordRoutes = require("./routes/record");
 const impedanceRoutes = require("./routes/impedance");
+const { authMiddleware } = require("./middleware/auth");
+const userRoutes = require("./routes/users");
+const userDeviceRoutes = require("./routes/userDevices");
+const goalRoutes = require("./routes/goals");
+const sessionRoutes = require("./routes/sessions");
+const personalizationRoutes = require("./routes/personalization");
+const scaleApiRoutes = require("./routes/scale");
+const metricRoutes = require("./routes/metrics");
 const { getSupabaseClient } = require("./services/supabase");
 const { OPENAI_API_KEY } = require("./config/constants");
 
@@ -312,6 +320,16 @@ app.post("/lefu/wifi/torre/config", (req, res) => {
 
 // Record endpoint is now handled by recordRoutes (mounted above)
 
+// --- Frontend API routes (JWT-authenticated) ---
+app.use("/api", authMiddleware);
+app.use("/api", userRoutes);
+app.use("/api", userDeviceRoutes);
+app.use("/api", goalRoutes);
+app.use("/api", sessionRoutes);
+app.use("/api", personalizationRoutes);
+app.use("/api", scaleApiRoutes);
+app.use("/api", metricRoutes);
+
 // Wi-Fi Provisioning: Device registration endpoint during Wi-Fi setup
 // This endpoint is called during the scale's Wi-Fi provisioning step
 // Path: /unique-scale/lefu/wifi/torre/register
@@ -461,5 +479,13 @@ app.listen(PORT, "0.0.0.0", () => {
   );
   console.log(`\n   POST /api/impedance - Manual impedance submission`);
   console.log(`\n   GET /ota/:filename - OTA firmware file download`);
-  console.log(`\n✅ Server ready - waiting for scale connections...\n`);
+  console.log(`\n📱 Frontend API Endpoints (JWT-authenticated):`);
+  console.log(`   GET/POST/PUT/DELETE /api/users/* - User management`);
+  console.log(`   GET    /api/devices - User devices`);
+  console.log(`   GET    /api/goals - User goals`);
+  console.log(`   CRUD   /api/sessions - Session management`);
+  console.log(`   GET/PUT /api/personalization/* - Personalization & streaks`);
+  console.log(`   GET/PUT /api/scale/* - Scale records & measurements`);
+  console.log(`   GET    /api/metrics/trend - Metric trend data`);
+  console.log(`\n✅ Server ready - waiting for connections...\n`);
 });

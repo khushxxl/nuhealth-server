@@ -6,6 +6,8 @@ const {
   updateGoalSummaries,
 } = require("../services/supabase");
 const { generateSummariesForRecord } = require("../utils/summaryGenerator");
+const { getUserProfile } = require("../services/supabase");
+const { sendPushNotification } = require("../services/notification");
 
 /**
  * POST /api/impedance
@@ -112,6 +114,20 @@ async function handleImpedance(req, res) {
   }
 
   console.log("✅ Data saved successfully");
+
+  // Send push notification to user
+  if (userid) {
+    const profileResult = await getUserProfile(userid);
+    if (profileResult.success && profileResult.profile?.notification_id) {
+      sendPushNotification(
+        profileResult.profile.notification_id,
+        "New Measurement",
+        "Your body composition data has been updated, check body page!",
+      ).catch((err) =>
+        console.error("⚠️  Error sending notification:", err.message),
+      );
+    }
+  }
 
   // Generate AI summaries in the background (don't block response)
   if (saveResult.recordId && processResult.mutatedBodyData) {
