@@ -32,6 +32,7 @@ const BIYO_EXACT_KEYS = {
   ffm: ["ppLoseFatWeightKg"],
   visceral: ["ppVisceralFat"],
   muscleMass: ["ppMuscleKg", "ppBodySkeletalKg"],
+  // Mass-based FFM components: scale by k (fat-free mass ratio)
   ffmComponent: [
     "ppWaterKg",
     "ppWaterICWKg",
@@ -39,20 +40,17 @@ const BIYO_EXACT_KEYS = {
     "ppProteinKg",
     "ppMineralKg",
     "ppBoneKg",
-    "ppBMR",
     "ppMuscleKgTrunk",
     "ppMuscleKgLeftArm",
     "ppMuscleKgRightArm",
     "ppMuscleKgLeftLeg",
     "ppMuscleKgRightLeg",
-    "ppBodySkeletal",
-    "ppMusclePercentage",
-    "ppProteinPercentage",
-    "ppWaterPercentage",
     "ppCellMassKg",
-    "ppMuscleKg",
-    "ppBodySkeletalKg",
   ],
+  // Percentage/rate metrics: recalculated from new mass values, NOT scaled by k
+  // ppMusclePercentage, ppProteinPercentage, ppWaterPercentage, ppBodySkeletal, ppBMR
+  // are left untouched — they are derived metrics that the Lefu API computes correctly
+  // relative to the raw data. Scaling them by k produces incorrect values.
 };
 
 module.exports = {

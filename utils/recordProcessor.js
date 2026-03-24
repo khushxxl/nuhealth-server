@@ -1,6 +1,13 @@
 const { mapImpedanceArray, fetchLefuBodyData } = require("../services/lefu");
 const { getUserProfile } = require("../services/supabase");
-const { applyCorrection } = require("./biyoCorrection");
+const {
+  applyCorrection,
+  getParamKey,
+  getCurrentValue,
+  setCurrentValue,
+  getItemRole,
+  extractMetrics,
+} = require("./biyoCorrection");
 
 /**
  * Extract parameters from request and fetch body data from Lefu API
@@ -254,6 +261,95 @@ async function processRecordData(reqBody) {
         if (biyo.applied) {
           console.log(
             `   BIYO correction applied: bucket=${biyo.bucket}, BF% corrected to ${biyo.bfCorrected?.toFixed(1)}%`,
+          );
+        }
+      }
+
+      // DEXA calibration: apply user's stored dexa_bf_offset if present
+      let dexaProfile = profileForBiyo;
+      if (!dexaProfile && userId) {
+        const profileResult = await getUserProfile(userId);
+        if (profileResult.success && profileResult.profile)
+          dexaProfile = profileResult.profile;
+      }
+
+      const dexaOffset = dexaProfile?.dexa_bf_offset;
+      if (dexaOffset != null && Number.isFinite(Number(dexaOffset)) && Number(dexaOffset) !== 0) {
+        const offset = Number(dexaOffset);
+        const preDexaMetrics = extractMetrics(mutatedBodyData, null, null);
+        const currentBfPct = preDexaMetrics.bfPct;
+        const currentWeight = preDexaMetrics.weight;
+        const currentFfm = preDexaMetrics.ffm;
+
+        if (currentBfPct != null && currentWeight != null && currentWeight > 0 && currentFfm != null && currentFfm > 0) {
+          const bfNew = currentBfPct + offset;
+          const fatMassNew = currentWeight * (bfNew / 100);
+          const ffmNew = currentWeight - fatMassNew;
+          const k = ffmNew / currentFfm;
+
+          for (const item of mutatedBodyData) {
+            const key = getParamKey(item);
+            const role = getItemRole(key);
+            const val = getCurrentValue(item);
+            if (val === null) continue;
+
+            switch (role) {
+              case "weight":
+                break;
+              case "bodyFatPct":
+                setCurrentValue(item, bfNew);
+                break;
+              case "fatMass":
+                setCurrentValue(item, fatMassNew);
+                break;
+              case "ffm":
+                setCurrentValue(item, ffmNew);
+                break;
+              case "visceral":
+                break;
+              case "muscleMass":
+              case "ffmComponent":
+                setCurrentValue(item, val * k);
+                break;
+              default:
+                break;
+            }
+          }
+
+          // Recalculate percentage metrics
+          const mutatedValues = {};
+          for (const item of mutatedBodyData) {
+            const key = getParamKey(item);
+            const val = getCurrentValue(item);
+            if (val !== null) mutatedValues[key] = val;
+          }
+
+          const w = mutatedValues["ppWeightKg"] ?? currentWeight;
+          const pctRecalc = {
+            ppMusclePercentage: mutatedValues["ppMuscleKg"] != null ? (mutatedValues["ppMuscleKg"] / w) * 100 : null,
+            ppProteinPercentage: mutatedValues["ppProteinKg"] != null ? (mutatedValues["ppProteinKg"] / w) * 100 : null,
+            ppWaterPercentage: mutatedValues["ppWaterKg"] != null ? (mutatedValues["ppWaterKg"] / w) * 100 : null,
+            ppBodySkeletal: mutatedValues["ppBodySkeletalKg"] != null ? (mutatedValues["ppBodySkeletalKg"] / w) * 100 : null,
+          };
+
+          for (const item of mutatedBodyData) {
+            const key = getParamKey(item);
+            if (pctRecalc[key] != null) {
+              setCurrentValue(item, pctRecalc[key]);
+            }
+          }
+
+          // Clamp health score
+          for (const item of mutatedBodyData) {
+            const key = getParamKey(item);
+            if (key === "ppBodyScore") {
+              const val = getCurrentValue(item);
+              if (val !== null && val > 100) setCurrentValue(item, 100);
+            }
+          }
+
+          console.log(
+            `   DEXA calibration applied: offset=${offset.toFixed(2)}pp, BF% adjusted to ${bfNew.toFixed(1)}%`,
           );
         }
       }

@@ -257,7 +257,7 @@ async function getUserProfile(userId) {
     console.log(`👤 Fetching user profile for user ID: ${userId}`);
     const { data, error } = await supabase
       .from("users")
-      .select("age, height, gender, user_body_type, notification_id")
+      .select("age, height, gender, user_body_type, notification_id, dexa_bf_offset")
       .eq("id", userId)
       .single();
 
@@ -284,6 +284,7 @@ async function getUserProfile(userId) {
         gender: data.gender,
         user_body_type: data.user_body_type ?? null,
         notification_id: data.notification_id ?? null,
+        dexa_bf_offset: data.dexa_bf_offset ?? null,
       },
     };
   } catch (err) {

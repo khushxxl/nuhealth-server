@@ -273,6 +273,27 @@ function applyCorrection(bodyData, heightCm, weightKg, sex, userBodyType) {
   result.bucket = bucket;
 
   const adjustment = BF_ADJUSTMENT[bucket] ?? 0;
+
+  // If bucket is "normal" (no BF% adjustment), skip the entire correction
+  // to avoid distorting Lefu's values due to internal inconsistencies (fat + FFM ≠ weight)
+  if (adjustment === 0) {
+    console.log("🔄 BIYO mutation: skipped (normal bucket, no adjustment needed)");
+
+    // Still clamp health score
+    for (const item of result.mutatedBodyData) {
+      const key = getParamKey(item);
+      if (key === "ppBodyScore") {
+        const val = getCurrentValue(item);
+        if (val !== null && val > 100) {
+          setCurrentValue(item, 100);
+          console.log(`🔄 BIYO mutation: clamped ppBodyScore from ${val} to 100`);
+        }
+      }
+    }
+
+    return result;
+  }
+
   const bounds = sex === 2 ? BF_BOUNDS.female : BF_BOUNDS.male;
   let bfCorrected =
     (bfRaw ?? (fatMassOld != null ? (fatMassOld / weight) * 100 : null)) +
@@ -345,6 +366,34 @@ function applyCorrection(bodyData, heightCm, weightKg, sex, userBodyType) {
         break;
       default:
         break;
+    }
+  }
+
+  // Recalculate percentage metrics from the new mass values
+  // Build a lookup of current mutated values for mass-based metrics
+  const mutatedValues = {};
+  for (const item of result.mutatedBodyData) {
+    const key = getParamKey(item);
+    const val = getCurrentValue(item);
+    if (val !== null) mutatedValues[key] = val;
+  }
+
+  const newWeight = mutatedValues["ppWeightKg"] ?? weight;
+  const percentageRecalculations = {
+    ppMusclePercentage: mutatedValues["ppMuscleKg"] != null
+      ? (mutatedValues["ppMuscleKg"] / newWeight) * 100 : null,
+    ppProteinPercentage: mutatedValues["ppProteinKg"] != null
+      ? (mutatedValues["ppProteinKg"] / newWeight) * 100 : null,
+    ppWaterPercentage: mutatedValues["ppWaterKg"] != null
+      ? (mutatedValues["ppWaterKg"] / newWeight) * 100 : null,
+    ppBodySkeletal: mutatedValues["ppBodySkeletalKg"] != null
+      ? (mutatedValues["ppBodySkeletalKg"] / newWeight) * 100 : null,
+  };
+
+  for (const item of result.mutatedBodyData) {
+    const key = getParamKey(item);
+    if (percentageRecalculations[key] != null) {
+      setCurrentValue(item, percentageRecalculations[key]);
     }
   }
 

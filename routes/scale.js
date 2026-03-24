@@ -465,4 +465,213 @@ router.put("/scale/goal-summaries", async (req, res) => {
   }
 });
 
+// PUT /api/scale/dexa-recalibrate - Apply DEXA Body Fat % with full cascade mutation
+// Body: { userId, dexaBodyFatPct: 18.5, applyToFuture: boolean }
+// Uses the same cascade logic as biyoCorrection.js applyCorrection
+router.put("/scale/dexa-recalibrate", async (req, res) => {
+  try {
+    const supabase = getServiceClient();
+    const { userId, dexaBodyFatPct, applyToFuture } = req.body;
+
+    if (!userId || dexaBodyFatPct == null || isNaN(Number(dexaBodyFatPct))) {
+      return error(res, "userId and dexaBodyFatPct are required", 400);
+    }
+
+    const bfNew = Number(dexaBodyFatPct);
+    if (bfNew < 1 || bfNew > 70) {
+      return error(res, "dexaBodyFatPct must be between 1 and 70", 400);
+    }
+
+    // 1. Fetch latest scale record with body data
+    const { data: record, error: fetchErr } = await supabase
+      .from("scale_records")
+      .select("id, mutated_response, lefu_body_data")
+      .eq("scale_user_id", userId)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (fetchErr || !record) {
+      return error(res, "No scale record found for this user", 404);
+    }
+
+    const bodyData = record.mutated_response ?? record.lefu_body_data;
+    if (!Array.isArray(bodyData) || bodyData.length === 0) {
+      return error(res, "No body data in latest record", 400);
+    }
+
+    // 2. Extract current metrics using biyoCorrection helpers
+    const {
+      getParamKey,
+      getCurrentValue,
+      setCurrentValue,
+      getItemRole,
+      extractMetrics,
+    } = require("../utils/biyoCorrection");
+
+    const metrics = extractMetrics(bodyData, null, null);
+    const weight = metrics.weight;
+    const ffmOld = metrics.ffm;
+
+    if (weight == null || weight <= 0) {
+      return error(res, "Cannot recalibrate: no weight found in record", 400);
+    }
+    if (ffmOld == null || ffmOld <= 0) {
+      return error(res, "Cannot recalibrate: no FFM found in record", 400);
+    }
+
+    // 3. Cascade: same logic as biyoCorrection.applyCorrection
+    const fatMassNew = weight * (bfNew / 100);
+    const ffmNew = weight - fatMassNew;
+    const k = ffmNew / ffmOld; // scaling factor for all FFM components
+
+    // Deep copy body data
+    const mutatedBodyData = bodyData.map((item) => ({ ...item }));
+    const changedKeys = {};
+
+    for (const item of mutatedBodyData) {
+      const key = getParamKey(item);
+      const role = getItemRole(key);
+      const val = getCurrentValue(item);
+      if (val === null) continue;
+
+      switch (role) {
+        case "weight":
+          // unchanged
+          break;
+        case "bodyFatPct":
+          setCurrentValue(item, bfNew);
+          changedKeys[key] = bfNew;
+          break;
+        case "fatMass":
+          setCurrentValue(item, fatMassNew);
+          changedKeys[key] = fatMassNew;
+          break;
+        case "ffm":
+          setCurrentValue(item, ffmNew);
+          changedKeys[key] = ffmNew;
+          break;
+        case "visceral":
+          // leave as-is (level, not a mass)
+          break;
+        case "muscleMass":
+        case "ffmComponent": {
+          const newVal = val * k;
+          setCurrentValue(item, newVal);
+          changedKeys[key] = newVal;
+          break;
+        }
+        default:
+          break;
+      }
+    }
+
+    // 4. Recalculate percentage metrics from new mass values
+    const mutatedValues = {};
+    for (const item of mutatedBodyData) {
+      const key = getParamKey(item);
+      const val = getCurrentValue(item);
+      if (val !== null) mutatedValues[key] = val;
+    }
+
+    const newWeight = mutatedValues["ppWeightKg"] ?? weight;
+    const percentageRecalculations = {
+      ppMusclePercentage: mutatedValues["ppMuscleKg"] != null
+        ? (mutatedValues["ppMuscleKg"] / newWeight) * 100 : null,
+      ppProteinPercentage: mutatedValues["ppProteinKg"] != null
+        ? (mutatedValues["ppProteinKg"] / newWeight) * 100 : null,
+      ppWaterPercentage: mutatedValues["ppWaterKg"] != null
+        ? (mutatedValues["ppWaterKg"] / newWeight) * 100 : null,
+      ppBodySkeletal: mutatedValues["ppBodySkeletalKg"] != null
+        ? (mutatedValues["ppBodySkeletalKg"] / newWeight) * 100 : null,
+    };
+
+    for (const item of mutatedBodyData) {
+      const key = getParamKey(item);
+      if (percentageRecalculations[key] != null) {
+        setCurrentValue(item, percentageRecalculations[key]);
+        changedKeys[key] = percentageRecalculations[key];
+      }
+    }
+
+    // 5. Clamp health score to 0-100
+    for (const item of mutatedBodyData) {
+      const key = getParamKey(item);
+      if (key === "ppBodyScore") {
+        const val = getCurrentValue(item);
+        if (val !== null && val > 100) {
+          setCurrentValue(item, 100);
+          changedKeys[key] = 100;
+        }
+      }
+    }
+
+    // 6. Update scale_records.mutated_response
+    const { error: updateErr } = await supabase
+      .from("scale_records")
+      .update({
+        mutated_response: mutatedBodyData,
+        is_recalibrated: true,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", record.id);
+
+    if (updateErr) {
+      console.error("❌ Failed to update scale_records:", updateErr.message);
+      return error(res, "Failed to update scale record");
+    }
+
+    // 7. Batch update all changed scale_measurements rows
+    for (const [paramKey, newValue] of Object.entries(changedKeys)) {
+      const rounded = Math.round(Number(newValue) * 100) / 100;
+      const { error: measErr } = await supabase
+        .from("scale_measurements")
+        .update({ current_value_num: rounded })
+        .eq("scale_record_id", record.id)
+        .eq("body_param_key", paramKey);
+
+      if (measErr) {
+        console.error(`⚠️  Failed to update measurement ${paramKey}:`, measErr.message);
+      }
+    }
+
+    const metricsUpdated = Object.keys(changedKeys).length;
+    console.log(
+      `✅ DEXA recalibration applied to record #${record.id} for user ${userId}:`,
+      `BF% ${bfNew}, k=${k.toFixed(4)}, ${metricsUpdated} metrics updated`
+    );
+
+    // 8. Save or clear dexa_bf_offset on users table
+    const originalBfPct = metrics.bfPct;
+    let offsetSaved = false;
+    if (applyToFuture === true && originalBfPct != null) {
+      const offset = bfNew - originalBfPct;
+      const { error: offsetErr } = await supabase
+        .from("users")
+        .update({ dexa_bf_offset: offset })
+        .eq("id", userId);
+      if (offsetErr) {
+        console.error("⚠️  Failed to save dexa_bf_offset:", offsetErr.message);
+      } else {
+        offsetSaved = true;
+        console.log(`   dexa_bf_offset saved: ${offset.toFixed(2)} pp`);
+      }
+    } else {
+      // Clear any previous offset
+      const { error: clearErr } = await supabase
+        .from("users")
+        .update({ dexa_bf_offset: null })
+        .eq("id", userId);
+      if (clearErr) {
+        console.error("⚠️  Failed to clear dexa_bf_offset:", clearErr.message);
+      }
+    }
+
+    return success(res, { recordId: record.id, metricsUpdated, offsetSaved }, "DEXA recalibration applied");
+  } catch (err) {
+    console.error("❌ PUT /api/scale/dexa-recalibrate error:", err.message);
+    return error(res, "Failed to apply DEXA recalibration");
+  }
+});
+
 module.exports = router;
