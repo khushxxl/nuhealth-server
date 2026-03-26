@@ -121,11 +121,11 @@ async function processRecordData(reqBody) {
 
         // Only use profile data if request didn't provide it
         if (age === undefined && profile.age !== null) {
-          age = profile.age;
+          age = parseInt(profile.age, 10);
           console.log(`   ✅ Using age from profile: ${age}`);
         }
         if (height === undefined && profile.height !== null) {
-          height = profile.height;
+          height = Math.round(parseFloat(profile.height));
           console.log(`   ✅ Using height from profile: ${height}`);
         }
         if (sex === undefined && profile.gender !== null) {
@@ -156,7 +156,10 @@ async function processRecordData(reqBody) {
       }
     }
 
-    // Default height (cm) if missing or invalid — ensure we never fail the request for height
+    // ─── Sanitize all parameters to proper types for Lefu API ───
+    // Lefu API requires: age (int), height (int cm), weight (float kg), sex (int 0/1), product (int)
+
+    // Height: must be integer cm
     const DEFAULT_HEIGHT_CM = 195;
     const heightNum =
       height !== undefined && height !== null && height !== ""
@@ -166,7 +169,31 @@ async function processRecordData(reqBody) {
       height = DEFAULT_HEIGHT_CM;
       console.log(`   ✅ Using default height: ${height} cm`);
     } else {
-      height = heightNum;
+      height = Math.round(heightNum);
+    }
+
+    // Age: must be integer
+    if (age !== undefined && age !== null) {
+      age = parseInt(String(age), 10);
+      if (isNaN(age) || age <= 0 || age > 150) age = undefined;
+    }
+
+    // Weight: must be a number (float OK)
+    if (weightKg !== undefined && weightKg !== null) {
+      weightKg = parseFloat(String(weightKg));
+      if (isNaN(weightKg) || weightKg <= 0) weightKg = undefined;
+    }
+
+    // Sex: must be integer (1=male, 2=female)
+    if (sex !== undefined && sex !== null) {
+      sex = parseInt(String(sex), 10);
+      if (isNaN(sex) || (sex !== 1 && sex !== 2)) sex = undefined;
+    }
+
+    // Product: must be integer
+    if (product !== undefined && product !== null) {
+      product = parseInt(String(product), 10);
+      if (isNaN(product)) product = undefined;
     }
 
     // If we don't have impedance array, log and return
