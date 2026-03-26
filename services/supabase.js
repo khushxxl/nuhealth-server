@@ -261,14 +261,41 @@ async function getUserProfile(userId) {
       .eq("id", userId)
       .single();
 
-    if (error) {
-      console.error("❌ Error fetching user profile:", error);
-      return { success: false, error: error.message };
-    }
+    if (error || !data) {
+      console.log(`   ⚠️  User not found directly (${error?.message || "no data"}), trying device owner lookup...`);
 
-    if (!data) {
-      console.log("⚠️  No user profile found");
-      return { success: false, error: "User not found" };
+      // Fallback: find the device that has this userId in user_list,
+      // then fetch the device owner's profile
+      try {
+        const { data: devices } = await supabase
+          .from("devices")
+          .select("user_id, user_list")
+          .not("user_list", "is", null);
+
+        if (devices) {
+          const ownerDevice = devices.find(
+            (d) => Array.isArray(d.user_list) && d.user_list.includes(userId)
+          );
+
+          if (ownerDevice) {
+            console.log(`   ✅ Found device owner: ${ownerDevice.user_id}`);
+            const { data: ownerProfile, error: ownerError } = await supabase
+              .from("users")
+              .select("age, height, gender, user_body_type, notification_id, dexa_bf_offset")
+              .eq("id", ownerDevice.user_id)
+              .single();
+
+            if (!ownerError && ownerProfile) {
+              console.log(`   ✅ Using device owner's profile as fallback`);
+              return { success: true, profile: ownerProfile };
+            }
+          }
+        }
+      } catch (fallbackErr) {
+        console.error("   ⚠️  Device owner fallback failed:", fallbackErr.message);
+      }
+
+      return { success: false, error: error?.message || "User not found" };
     }
 
     console.log("✅ User profile fetched successfully");

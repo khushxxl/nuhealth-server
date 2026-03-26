@@ -4,8 +4,10 @@ const { processRecordData } = require("../utils/recordProcessor");
 const {
   saveRecordToSupabase,
   updateGoalSummaries,
+  getUserProfile,
 } = require("../services/supabase");
 const { generateSummariesForRecord } = require("../utils/summaryGenerator");
+const { sendPushNotification } = require("../services/notification");
 
 /**
  * Handle record endpoint
@@ -65,6 +67,23 @@ async function handleRecord(req, res) {
               summaryError.message,
             );
             // Don't fail the request if summaries fail
+          }
+        }
+
+        // Send push notification to user about new measurement
+        if (userId) {
+          try {
+            const profileResult = await getUserProfile(userId);
+            const pushToken = profileResult?.profile?.notification_id;
+            if (pushToken) {
+              await sendPushNotification(
+                pushToken,
+                "New measurement synced",
+                "Your scale data has been processed. Open the app to see your updated body metrics.",
+              );
+            }
+          } catch (notifErr) {
+            console.error("⚠️  Notification error (non-blocking):", notifErr.message);
           }
         }
       } else {
