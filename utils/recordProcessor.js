@@ -1,5 +1,6 @@
 const { mapImpedanceArray, fetchLefuBodyData } = require("../services/lefu");
 const { getUserProfile } = require("../services/supabase");
+const { sendPushNotification } = require("../services/notification");
 const {
   applyCorrection,
   getParamKey,
@@ -212,6 +213,28 @@ async function processRecordData(reqBody) {
         success: false,
         error: "Impedance array not found or invalid (need 10 values)",
       };
+    }
+
+    // Send "Processing" notification to user
+    if (userId) {
+      (async () => {
+        try {
+          let pushToken = profileForBiyo?.notification_id;
+          if (!pushToken) {
+            const result = await getUserProfile(userId);
+            pushToken = result?.profile?.notification_id;
+          }
+          if (pushToken) {
+            await sendPushNotification(
+              pushToken,
+              "Processing your data",
+              "We shall notify you once ready",
+            );
+          }
+        } catch (err) {
+          console.error("⚠️ Processing notification failed:", err.message);
+        }
+      })();
     }
 
     // Map impedance array to API parameters
