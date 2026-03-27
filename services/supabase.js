@@ -351,10 +351,40 @@ async function updateGoalSummaries(recordId, summaries) {
   }
 }
 
+/**
+ * Find the device owner for a given scale userId by checking devices.user_list
+ * @param {string} scaleUserId - The userId from the scale's WiFi record
+ * @returns {Promise<string|null>} The device owner's user_id, or null
+ */
+async function findDeviceOwnerByScaleUserId(scaleUserId) {
+  if (!supabase || !scaleUserId) return null;
+
+  try {
+    const { data: devices } = await supabase
+      .from("devices")
+      .select("user_id, user_list")
+      .not("user_list", "is", null);
+
+    if (devices) {
+      const ownerDevice = devices.find(
+        (d) => Array.isArray(d.user_list) && d.user_list.includes(scaleUserId),
+      );
+      if (ownerDevice) {
+        return ownerDevice.user_id;
+      }
+    }
+    return null;
+  } catch (err) {
+    console.error("❌ Error finding device owner:", err.message);
+    return null;
+  }
+}
+
 module.exports = {
   saveRecordToSupabase,
   updateGoalSummaries,
   getUserProfile,
+  findDeviceOwnerByScaleUserId,
   getSupabaseClient: () => supabase,
   getServiceClient: () => serviceClient || supabase,
 };

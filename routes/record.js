@@ -5,6 +5,7 @@ const {
   saveRecordToSupabase,
   updateGoalSummaries,
   getUserProfile,
+  findDeviceOwnerByScaleUserId,
 } = require("../services/supabase");
 const { generateSummariesForRecord } = require("../utils/summaryGenerator");
 const { sendPushNotification } = require("../services/notification");
@@ -27,10 +28,24 @@ async function handleRecord(req, res) {
       console.log("💾 Saving record with Lefu API body data to Supabase...");
 
       // Extract user ID from request (could be in list[0].userid or req.body.userid)
-      const userId =
+      const rawScaleUserId =
         (req.body.list && req.body.list[0] && req.body.list[0].userid) ||
         req.body.userid ||
         null;
+
+      // Resolve to device owner if the scale userId doesn't exist as an app user
+      let userId = rawScaleUserId;
+      if (rawScaleUserId) {
+        const profileCheck = await getUserProfile(rawScaleUserId);
+        if (!profileCheck.success) {
+          // Scale userId is stale — find device owner
+          const ownerId = await findDeviceOwnerByScaleUserId(rawScaleUserId);
+          if (ownerId) {
+            console.log(`📋 Resolved stale scale userId ${rawScaleUserId} → device owner ${ownerId}`);
+            userId = ownerId;
+          }
+        }
+      }
 
       const recordData = {
         code: 200,
@@ -96,15 +111,21 @@ async function handleRecord(req, res) {
       // If request already has code 200 with body data, save it directly
       console.log("💾 Detected code 200 - saving to Supabase...");
 
-      // Extract user ID from request if not already in recordData
+      // Extract and resolve user ID from request
       if (!req.body.scaleUserId) {
-        const userId =
+        const rawId =
           (req.body.data?.list && req.body.data.list[0]?.userid) ||
           (req.body.list && req.body.list[0]?.userid) ||
           req.body.userid ||
           null;
-        if (userId) {
-          req.body.scaleUserId = userId;
+        if (rawId) {
+          const profileCheck = await getUserProfile(rawId);
+          if (profileCheck.success) {
+            req.body.scaleUserId = rawId;
+          } else {
+            const ownerId = await findDeviceOwnerByScaleUserId(rawId);
+            req.body.scaleUserId = ownerId || rawId;
+          }
         }
       }
 
