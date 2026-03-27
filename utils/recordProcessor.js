@@ -224,12 +224,15 @@ async function processRecordData(reqBody) {
             const result = await getUserProfile(userId);
             pushToken = result?.profile?.notification_id;
           }
+          console.log(`📲 [Processing] Push token for userId ${userId}: ${pushToken || "NULL"}`);
           if (pushToken) {
             await sendPushNotification(
               pushToken,
               "Processing your data",
               "We shall notify you once ready",
             );
+          } else {
+            console.log("⚠️  Cannot send processing notification — notification_id is null");
           }
         } catch (err) {
           console.error("⚠️ Processing notification failed:", err.message);

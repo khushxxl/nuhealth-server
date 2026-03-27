@@ -75,12 +75,15 @@ async function handleRecord(req, res) {
           try {
             const profileResult = await getUserProfile(userId);
             const pushToken = profileResult?.profile?.notification_id;
+            console.log(`📲 Push token for userId ${userId}: ${pushToken || "NULL — token not saved in DB"}`);
             if (pushToken) {
               await sendPushNotification(
                 pushToken,
                 "New measurement synced",
                 "Your scale data has been processed. Open the app to see your updated body metrics.",
               );
+            } else {
+              console.log("⚠️  Cannot send notification — notification_id is null in users table");
             }
           } catch (notifErr) {
             console.error("⚠️  Notification error (non-blocking):", notifErr.message);
