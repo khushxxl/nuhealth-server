@@ -255,19 +255,60 @@ router.delete("/users/me", async (req, res) => {
     }
 
     const userId = userData.id;
+    console.log(`🗑️ Deleting account for user: ${userId}`);
 
-    // Delete in order: messages, personalization, then user
+    // Delete all associated data (order matters for foreign keys)
+    // 1. Scale measurements (via scale_records)
+    const { data: records } = await supabase
+      .from("scale_records")
+      .select("id")
+      .eq("scale_user_id", userId);
+    if (records && records.length > 0) {
+      const recordIds = records.map((r) => r.id);
+      await supabase.from("scale_measurements").delete().in("scale_record_id", recordIds);
+    }
+
+    // 2. Scale records
+    await supabase.from("scale_records").delete().eq("scale_user_id", userId);
+
+    // 3. Subscription events
+    try { await supabase.from("subscription_events").delete().eq("user_id", userId); } catch (_) {}
+
+    // 4. User goals
+    try { await supabase.from("user_goals").delete().eq("user_id", userId); } catch (_) {}
+
+    // 5. Devices
+    await supabase.from("devices").delete().eq("user_id", userId);
+
+    // 6. Log sessions
+    try { await supabase.from("log_sessions").delete().eq("user_id", userId); } catch (_) {}
+
+    // 7. Messages
     await supabase.from("messages").delete().eq("user_id", userId);
+
+    // 8. Personalization
     await supabase.from("personalization").delete().eq("userid", userId);
+
+    // 9. Delete the user record
     const { error: deleteError } = await supabase
       .from("users")
       .delete()
       .eq("id", userId);
 
     if (deleteError) {
+      console.error("❌ Failed to delete user record:", deleteError);
       return error(res, deleteError.message, 500);
     }
 
+    // 10. Delete Supabase auth user
+    try {
+      await supabase.auth.admin.deleteUser(userId);
+      console.log("✅ Auth user deleted");
+    } catch (authErr) {
+      console.warn("⚠️ Failed to delete auth user (non-blocking):", authErr.message);
+    }
+
+    console.log(`✅ Account fully deleted: ${userId}`);
     return success(res, null, "Account deleted successfully");
   } catch (err) {
     console.error("❌ DELETE /api/users/me error:", err.message);
