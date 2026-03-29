@@ -20,6 +20,7 @@ const sessionRoutes = require("./routes/sessions");
 const personalizationRoutes = require("./routes/personalization");
 const scaleApiRoutes = require("./routes/scale");
 const metricRoutes = require("./routes/metrics");
+const webhookRoutes = require("./routes/webhook");
 const { getSupabaseClient } = require("./services/supabase");
 const { OPENAI_API_KEY } = require("./config/constants");
 
@@ -319,6 +320,9 @@ app.post("/lefu/wifi/torre/config", (req, res) => {
 });
 
 // Record endpoint is now handled by recordRoutes (mounted above)
+
+// --- Webhook routes (no auth — server-to-server) ---
+app.use("/webhooks", webhookRoutes);
 
 // --- Frontend API routes (JWT-authenticated) ---
 app.use("/api", authMiddleware);
