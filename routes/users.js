@@ -300,12 +300,15 @@ router.delete("/users/me", async (req, res) => {
       return error(res, deleteError.message, 500);
     }
 
-    // 10. Delete Supabase auth user
-    try {
-      await supabase.auth.admin.deleteUser(userId);
-      console.log("✅ Auth user deleted");
-    } catch (authErr) {
-      console.warn("⚠️ Failed to delete auth user (non-blocking):", authErr.message);
+    // 10. Delete Supabase auth user (use auth UUID from JWT, not users table ID)
+    const authUserId = req.user.id;
+    console.log(`🗑️ Deleting auth user: ${authUserId}`);
+    const { data: authDeleteData, error: authDeleteError } =
+      await supabase.auth.admin.deleteUser(authUserId);
+    if (authDeleteError) {
+      console.error("⚠️ Failed to delete auth user:", authDeleteError);
+    } else {
+      console.log("✅ Auth user deleted:", authDeleteData);
     }
 
     console.log(`✅ Account fully deleted: ${userId}`);

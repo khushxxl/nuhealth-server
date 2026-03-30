@@ -119,13 +119,9 @@ async function handleRecord(req, res) {
           req.body.userid ||
           null;
         if (rawId) {
-          const profileCheck = await getUserProfile(rawId);
-          if (profileCheck.success) {
-            req.body.scaleUserId = rawId;
-          } else {
-            const ownerId = await findDeviceOwnerByScaleUserId(rawId);
-            req.body.scaleUserId = ownerId || rawId;
-          }
+          // Always use the raw user ID from the scale payload.
+          // This is the actual user who measured, not the device owner.
+          req.body.scaleUserId = rawId;
         }
       }
 
