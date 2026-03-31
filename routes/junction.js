@@ -59,8 +59,8 @@ router.post("/junction/link-token", async (req, res) => {
       ...(provider && { provider }),
     });
 
-    console.log(`✅ [Junction] Link token generated for user ${junctionUserId}`);
-    return success(res, { linkToken: result.linkToken });
+    console.log(`✅ [Junction] Link token generated for user ${junctionUserId}`, JSON.stringify(result, null, 2));
+    return success(res, { linkToken: result.linkToken, linkWebUrl: result.linkWebUrl });
   } catch (err) {
     console.error("❌ POST /api/junction/link-token error:", err.message);
     return error(res, "Failed to generate link token");
