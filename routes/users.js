@@ -319,4 +319,40 @@ router.delete("/users/me", async (req, res) => {
   }
 });
 
+// GET /api/users/merged-user-list?userId=X - Get merged user_list from all devices sharing the same scale
+// Finds all devices whose user_list contains this userId, then merges all user_lists into one deduplicated array
+router.get("/users/merged-user-list", async (req, res) => {
+  try {
+    const { userId } = req.query;
+    if (!userId) {
+      return error(res, "userId query parameter is required", 400);
+    }
+
+    const supabase = getServiceClient();
+
+    // Get all devices that have a user_list containing this userId
+    const { data: devices, error: dbError } = await supabase
+      .from("devices")
+      .select("user_list")
+      .not("user_list", "is", null);
+
+    if (dbError) {
+      return error(res, dbError.message, 500);
+    }
+
+    // Filter to devices whose user_list includes this userId, then merge all lists
+    const merged = new Set();
+    (devices || []).forEach((d) => {
+      if (Array.isArray(d.user_list) && d.user_list.includes(userId)) {
+        d.user_list.forEach((id) => merged.add(id));
+      }
+    });
+
+    return success(res, [...merged]);
+  } catch (err) {
+    console.error("❌ GET /api/users/merged-user-list error:", err.message);
+    return error(res, "Failed to fetch merged user list");
+  }
+});
+
 module.exports = router;
