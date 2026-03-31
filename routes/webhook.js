@@ -178,7 +178,28 @@ router.post("/superwall", async (req, res) => {
         .maybeSingle();
 
       if (findError || !user) {
-        console.warn(`⚠️ [Webhook] User not found by ID: ${appUserId}`);
+        console.warn(`⚠️ [Webhook] User not found — ID: ${appUserId}, original: ${eventData.originalAppUserId}`);
+
+        // Store as pending for later resolution when user opens app and identify() links their alias
+        try {
+          await supabase.from("pending_subscription_events").upsert({
+            event_id: eventData.id,
+            event_type: eventType,
+            original_app_user_id: eventData.originalAppUserId,
+            alias_id: appUserId,
+            product_id: eventData.productId,
+            store: eventData.store,
+            period_type: eventData.periodType,
+            price: eventData.price,
+            expires_at: eventData.expirationAt ? new Date(eventData.expirationAt).toISOString() : null,
+            purchased_at: eventData.purchasedAt ? new Date(eventData.purchasedAt).toISOString() : null,
+            cancel_reason: eventData.cancelReason || eventData.expirationReason || null,
+            raw_payload: event,
+          }, { onConflict: "event_id" });
+          console.log(`📦 [Webhook] Stored as pending event for later resolution`);
+        } catch (pendingErr) {
+          console.error("❌ [Webhook] Failed to store pending event:", pendingErr.message);
+        }
         return;
       }
 

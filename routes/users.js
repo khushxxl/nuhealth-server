@@ -319,6 +319,52 @@ router.delete("/users/me", async (req, res) => {
   }
 });
 
+// PUT /api/users/me/subscription - Update user subscription status
+router.put("/users/me/subscription", async (req, res) => {
+  try {
+    const {
+      subscription_status,
+      subscription_product_id,
+      subscription_expires_at,
+      subscription_started_at,
+      subscription_store,
+      subscription_period_type,
+      subscription_cancel_reason,
+    } = req.body;
+
+    if (!subscription_status) {
+      return error(res, "subscription_status is required", 400);
+    }
+
+    const supabase = getServiceClient();
+    const updateData = {
+      subscription_status,
+      ...(subscription_product_id !== undefined && { subscription_product_id }),
+      ...(subscription_expires_at !== undefined && { subscription_expires_at }),
+      ...(subscription_started_at !== undefined && { subscription_started_at }),
+      ...(subscription_store !== undefined && { subscription_store }),
+      ...(subscription_period_type !== undefined && { subscription_period_type }),
+      ...(subscription_cancel_reason !== undefined && { subscription_cancel_reason }),
+    };
+
+    const { data, error: dbError } = await supabase
+      .from("users")
+      .update(updateData)
+      .eq("id", req.user.id)
+      .select()
+      .single();
+
+    if (dbError) {
+      return error(res, dbError.message, 500);
+    }
+
+    return success(res, data);
+  } catch (err) {
+    console.error("❌ PUT /api/users/me/subscription error:", err.message);
+    return error(res, "Failed to update subscription status");
+  }
+});
+
 // GET /api/users/merged-user-list?userId=X - Get merged user_list from all devices sharing the same scale
 // Finds all devices whose user_list contains this userId, then merges all user_lists into one deduplicated array
 router.get("/users/merged-user-list", async (req, res) => {
