@@ -253,4 +253,26 @@ router.post("/superwall", async (req, res) => {
   }
 });
 
+/**
+ * POST /webhooks/junction
+ *
+ * Receives Junction (Vital) wearable data events.
+ * Phase 1: Log only — no DB writes.
+ */
+router.post("/junction", async (req, res) => {
+  res.status(200).json({ received: true });
+
+  try {
+    const event = req.body;
+    console.log(`📩 [Junction Webhook] Event: ${event.event_type}`, {
+      userId: event.user_id,
+      dataType: event.event_type,
+    });
+
+    // Phase 2 will add Supabase persistence here
+  } catch (err) {
+    console.error("❌ [Junction Webhook] Error:", err.message);
+  }
+});
+
 module.exports = router;
