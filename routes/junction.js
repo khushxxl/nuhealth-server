@@ -80,12 +80,13 @@ router.post("/junction/sign-in-token", async (req, res) => {
       return error(res, "junctionUserId is required", 400);
     }
 
-    const result = await junction.user.createSignInToken(junctionUserId);
+    console.log(`📡 [Junction] Requesting sign-in token for user: ${junctionUserId}`);
+    const result = await junction.user.getUserSignInToken(junctionUserId);
+    console.log(`✅ [Junction] Sign-in token result:`, JSON.stringify(result, null, 2));
 
-    console.log(`✅ [Junction] Sign-in token generated for user ${junctionUserId}`);
-    return success(res, { signInToken: result.signInToken });
+    return success(res, { signInToken: result.signInToken || result.sign_in_token });
   } catch (err) {
-    console.error("❌ POST /api/junction/sign-in-token error:", err.message);
+    console.error("❌ POST /api/junction/sign-in-token error:", err.message, err.body || err.statusCode || "");
     return error(res, "Failed to generate sign-in token");
   }
 });
