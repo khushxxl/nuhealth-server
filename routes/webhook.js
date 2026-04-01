@@ -260,13 +260,16 @@ router.post("/superwall", async (req, res) => {
  * Phase 1: Log only — no DB writes.
  */
 router.post("/junction", async (req, res) => {
+  console.log(`📩 [Junction Webhook] Received request`);
+  console.log(`📩 [Junction Webhook] Full payload:`, JSON.stringify(req.body, null, 2));
   res.status(200).json({ received: true });
 
   try {
     const event = req.body;
-    console.log(`📩 [Junction Webhook] Event: ${event.event_type}`, {
+    console.log(`📩 [Junction Webhook] Event type: ${event.event_type}`, {
       userId: event.user_id,
-      dataType: event.event_type,
+      clientUserId: event.client_user_id,
+      data: event.data ? Object.keys(event.data) : "no data",
     });
 
     // Phase 2 will add Supabase persistence here
