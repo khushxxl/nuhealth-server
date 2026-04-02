@@ -401,4 +401,63 @@ router.get("/users/merged-user-list", async (req, res) => {
   }
 });
 
+// POST /api/devices/sync-scale-user-list - Sync user_list across all bodyscale devices owned by users in the list
+// When user B syncs and the scale has [A, B], this updates A's device record too
+router.post("/devices/sync-scale-user-list", async (req, res) => {
+  try {
+    const { userList } = req.body;
+    if (!userList || !Array.isArray(userList) || userList.length === 0) {
+      return error(res, "userList array is required", 400);
+    }
+
+    const supabase = getServiceClient();
+
+    // Find all bodyscale devices owned by ANY user in the list
+    const { data: devices, error: findError } = await supabase
+      .from("devices")
+      .select("id, user_id, device_name, user_list")
+      .in("user_id", userList);
+
+    if (findError) {
+      return error(res, findError.message, 500);
+    }
+
+    // Filter to bodyscale devices only
+    const bodyscaleDevices = (devices || []).filter((d) => {
+      const name = (d.device_name || "").toLowerCase();
+      return name.includes("nubody") || name.includes("biyo");
+    });
+
+    if (bodyscaleDevices.length === 0) {
+      return success(res, { updated: 0 }, "No bodyscale devices found");
+    }
+
+    // Update each device's user_list to the full list
+    let updated = 0;
+    for (const device of bodyscaleDevices) {
+      const existing = Array.isArray(device.user_list) ? device.user_list.sort() : [];
+      const newList = [...userList].sort();
+      // Only update if different
+      if (JSON.stringify(existing) !== JSON.stringify(newList)) {
+        const { error: updateError } = await supabase
+          .from("devices")
+          .update({ user_list: userList })
+          .eq("id", device.id);
+
+        if (updateError) {
+          console.error(`⚠️ Failed to update device ${device.id}:`, updateError.message);
+        } else {
+          updated++;
+        }
+      }
+    }
+
+    console.log(`✅ Synced user_list [${userList.join(", ")}] across ${updated} device(s)`);
+    return success(res, { updated });
+  } catch (err) {
+    console.error("❌ POST /api/devices/sync-scale-user-list error:", err.message);
+    return error(res, "Failed to sync scale user list");
+  }
+});
+
 module.exports = router;
