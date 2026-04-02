@@ -401,4 +401,53 @@ router.get("/users/merged-user-list", async (req, res) => {
   }
 });
 
+// POST /api/devices/clear-scale-users - Clear user_list on all bodyscale devices owned by the given user IDs
+router.post("/devices/clear-scale-users", async (req, res) => {
+  try {
+    const { userIds } = req.body;
+    if (!userIds || !Array.isArray(userIds) || userIds.length === 0) {
+      return error(res, "userIds array is required", 400);
+    }
+
+    const supabase = getServiceClient();
+
+    // Find all bodyscale devices owned by these users
+    const { data: devices, error: findError } = await supabase
+      .from("devices")
+      .select("id, user_id, device_name")
+      .in("user_id", userIds);
+
+    if (findError) {
+      return error(res, findError.message, 500);
+    }
+
+    // Filter to bodyscale devices only (name contains "nubody" or "biyo")
+    const bodyscaleDevices = (devices || []).filter((d) => {
+      const name = (d.device_name || "").toLowerCase();
+      return name.includes("nubody") || name.includes("biyo");
+    });
+
+    if (bodyscaleDevices.length === 0) {
+      return success(res, { cleared: 0 }, "No bodyscale devices found");
+    }
+
+    const deviceIds = bodyscaleDevices.map((d) => d.id);
+
+    const { error: updateError } = await supabase
+      .from("devices")
+      .update({ user_list: [] })
+      .in("id", deviceIds);
+
+    if (updateError) {
+      return error(res, updateError.message, 500);
+    }
+
+    console.log(`✅ Cleared user_list on ${deviceIds.length} bodyscale device(s) for users: ${userIds.join(", ")}`);
+    return success(res, { cleared: deviceIds.length });
+  } catch (err) {
+    console.error("❌ POST /api/devices/clear-scale-users error:", err.message);
+    return error(res, "Failed to clear scale users");
+  }
+});
+
 module.exports = router;
