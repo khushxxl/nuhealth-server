@@ -18,4 +18,8 @@ module.exports = {
 
   // OpenAI configuration
   OPENAI_API_KEY: process.env.OPEN_AI_API,
+
+  // Junction (Vital) configuration
+  JUNCTION_API_KEY: process.env.JUNCTION_API_KEY,
+  JUNCTION_ENVIRONMENT: process.env.JUNCTION_ENVIRONMENT || "sandbox",
 };
