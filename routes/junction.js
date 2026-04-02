@@ -91,4 +91,31 @@ router.post("/junction/sign-in-token", async (req, res) => {
   }
 });
 
+// POST /api/junction/connect-demo — Connect a demo (synthetic) provider in sandbox
+router.post("/junction/connect-demo", async (req, res) => {
+  try {
+    const junction = getJunctionClient();
+    if (!junction) {
+      return error(res, "Junction service not configured", 503);
+    }
+
+    const { junctionUserId, provider } = req.body;
+    if (!junctionUserId || !provider) {
+      return error(res, "junctionUserId and provider are required", 400);
+    }
+
+    console.log(`🔗 [Junction] Connecting demo provider: ${provider} for user ${junctionUserId}`);
+    const result = await junction.link.connectDemoProvider({
+      userId: junctionUserId,
+      provider,
+    });
+
+    console.log(`✅ [Junction] Demo ${provider} connected:`, JSON.stringify(result, null, 2));
+    return success(res, result);
+  } catch (err) {
+    console.error("❌ POST /api/junction/connect-demo error:", err.message, err.body || err.statusCode || "");
+    return error(res, `Failed to connect demo provider: ${err.message}`);
+  }
+});
+
 module.exports = router;
