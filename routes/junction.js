@@ -92,6 +92,7 @@ router.post("/junction/sign-in-token", async (req, res) => {
 });
 
 // POST /api/junction/connect-demo — Connect a demo (synthetic) provider in sandbox
+// Creates a dedicated demo-only Junction user (demo connections can't coexist with real ones)
 router.post("/junction/connect-demo", async (req, res) => {
   try {
     const junction = getJunctionClient();
@@ -99,19 +100,44 @@ router.post("/junction/connect-demo", async (req, res) => {
       return error(res, "Junction service not configured", 503);
     }
 
-    const { junctionUserId, provider } = req.body;
-    if (!junctionUserId || !provider) {
-      return error(res, "junctionUserId and provider are required", 400);
+    const { provider } = req.body;
+    if (!provider) {
+      return error(res, "provider is required", 400);
     }
 
-    console.log(`🔗 [Junction] Connecting demo provider: ${provider} for user ${junctionUserId}`);
+    const clientUserId = req.user.id;
+    const demoClientUserId = `demo-${clientUserId}`;
+
+    // Try to find or create a demo-only Junction user
+    let demoJunctionUserId;
+    try {
+      const demoUser = await junction.user.create({ clientUserId: demoClientUserId });
+      demoJunctionUserId = demoUser.userId;
+      console.log(`✅ [Junction] Created demo user: ${demoJunctionUserId} for ${demoClientUserId}`);
+    } catch (err) {
+      if (err.statusCode === 400 || err.status === 400) {
+        // Demo user already exists, find it
+        const users = await junction.user.getAll();
+        const existing = users?.users?.find((u) => u.clientUserId === demoClientUserId);
+        if (existing) {
+          demoJunctionUserId = existing.userId;
+          console.log(`ℹ️ [Junction] Reusing demo user: ${demoJunctionUserId}`);
+        } else {
+          return error(res, "Demo user exists but could not retrieve ID", 500);
+        }
+      } else {
+        throw err;
+      }
+    }
+
+    console.log(`🔗 [Junction] Connecting demo provider: ${provider} for demo user ${demoJunctionUserId}`);
     const result = await junction.link.connectDemoProvider({
-      userId: junctionUserId,
+      userId: demoJunctionUserId,
       provider,
     });
 
     console.log(`✅ [Junction] Demo ${provider} connected:`, JSON.stringify(result, null, 2));
-    return success(res, result);
+    return success(res, { ...result, demoJunctionUserId });
   } catch (err) {
     console.error("❌ POST /api/junction/connect-demo error:", err.message, err.body || err.statusCode || "");
     return error(res, `Failed to connect demo provider: ${err.message}`);
