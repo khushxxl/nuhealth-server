@@ -432,16 +432,19 @@ router.post("/devices/sync-scale-user-list", async (req, res) => {
       return success(res, { updated: 0 }, "No bodyscale devices found");
     }
 
-    // Update each device's user_list to the full list
+    // MERGE incoming list with each device's existing list (union, never shrink)
+    // This prevents a stale [A] call from overwriting a correct [A, B]
     let updated = 0;
     for (const device of bodyscaleDevices) {
-      const existing = Array.isArray(device.user_list) ? device.user_list.sort() : [];
-      const newList = [...userList].sort();
-      // Only update if different
-      if (JSON.stringify(existing) !== JSON.stringify(newList)) {
+      const existing = Array.isArray(device.user_list) ? device.user_list : [];
+      const merged = [...new Set([...existing, ...userList])];
+      const existingSorted = [...existing].sort();
+      const mergedSorted = [...merged].sort();
+      // Only update if the merged list differs from existing
+      if (JSON.stringify(existingSorted) !== JSON.stringify(mergedSorted)) {
         const { error: updateError } = await supabase
           .from("devices")
-          .update({ user_list: userList })
+          .update({ user_list: merged })
           .eq("id", device.id);
 
         if (updateError) {
@@ -452,7 +455,7 @@ router.post("/devices/sync-scale-user-list", async (req, res) => {
       }
     }
 
-    console.log(`✅ Synced user_list [${userList.join(", ")}] across ${updated} device(s)`);
+    console.log(`✅ Merged user_list [${userList.join(", ")}] across ${updated} device(s)`);
     return success(res, { updated });
   } catch (err) {
     console.error("❌ POST /api/devices/sync-scale-user-list error:", err.message);
