@@ -321,7 +321,10 @@ router.post("/junction", async (req, res) => {
       return;
     }
 
+    console.log(`📩 [Junction] Raw data keys for ${eventType}:`, JSON.stringify(data, null, 2));
+
     const metrics = normalizer[fnName](data, calendarDate);
+    console.log(`📩 [Junction] Normalized ${metrics.length} metrics:`, metrics.map((m) => `${m.metric_key}=${m.value_num}`).join(", ") || "none");
 
     // Some providers include recovery data in sleep or activity events
     if (typeof normalizer.normalizeRecovery === "function") {

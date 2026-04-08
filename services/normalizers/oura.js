@@ -18,7 +18,7 @@ function normalizeSleep(data, calendarDate) {
   const add = (key, name, val, unit) => {
     if (val != null) metrics.push({ category: "sleep", metric_key: key, metric_name: name, value_num: val, value_text: null, unit });
   };
-  add("sleep_total", "Total Sleep", data.total, "sec");
+  add("sleep_total", "Total Sleep", data.total || data.duration, "sec");
   add("sleep_rem", "REM Sleep", data.rem, "sec");
   add("sleep_deep", "Deep Sleep", data.deep, "sec");
   add("sleep_light", "Light Sleep", data.light, "sec");
