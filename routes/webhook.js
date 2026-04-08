@@ -280,8 +280,11 @@ router.post("/junction", async (req, res) => {
   try {
     const event = req.body;
     const eventType = event.event_type;
-    const userId = event.client_user_id; // Supabase user ID
     const data = event.data;
+
+    // client_user_id is either the raw Supabase user ID or "demo-<userId>"
+    const rawClientId = event.client_user_id || "";
+    const userId = rawClientId.startsWith("demo-") ? rawClientId.slice(5) : rawClientId;
     const provider = data?.source?.provider || data?.provider_slug || "unknown";
     const calendarDate = data?.calendar_date || new Date().toISOString().split("T")[0];
     const recordedAt = `${calendarDate}T00:00:00Z`;
@@ -302,14 +305,17 @@ router.post("/junction", async (req, res) => {
     }
 
     // Map event type to normalizer function
+    // Map event types to normalizer functions (handle both .created and .updated)
     const eventMap = {
-      "daily.data.activity.created": "normalizeActivity",
-      "daily.data.sleep.created": "normalizeSleep",
-      "daily.data.body.created": "normalizeBody",
-      "daily.data.heartrate.created": "normalizeHeartRate",
+      "daily.data.activity": "normalizeActivity",
+      "daily.data.sleep": "normalizeSleep",
+      "daily.data.body": "normalizeBody",
+      "daily.data.heartrate": "normalizeHeartRate",
     };
 
-    const fnName = eventMap[eventType];
+    // Strip .created/.updated suffix to match
+    const baseEvent = eventType.replace(/\.(created|updated)$/, "");
+    const fnName = eventMap[baseEvent];
     if (!fnName || typeof normalizer[fnName] !== "function") {
       console.log(`📩 [Junction] No handler for ${eventType}, skipping`);
       return;
