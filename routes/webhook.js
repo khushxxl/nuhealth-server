@@ -271,22 +271,77 @@ router.post("/superwall", async (req, res) => {
  * POST /webhooks/junction
  *
  * Receives Junction (Vital) wearable data events.
- * Phase 1: Log only — no DB writes.
+ * Normalizes metrics per provider and persists to health_metrics table.
  */
 router.post("/junction", async (req, res) => {
-  console.log(`📩 [Junction Webhook] Received request`);
-  console.log(`📩 [Junction Webhook] Full payload:`, JSON.stringify(req.body, null, 2));
+  // Respond immediately so Junction doesn't retry
   res.status(200).json({ received: true });
 
   try {
     const event = req.body;
-    console.log(`📩 [Junction Webhook] Event type: ${event.event_type}`, {
-      userId: event.user_id,
-      clientUserId: event.client_user_id,
-      data: event.data ? Object.keys(event.data) : "no data",
-    });
+    const eventType = event.event_type;
+    const userId = event.client_user_id; // Supabase user ID
+    const data = event.data;
+    const provider = data?.source?.provider || data?.provider_slug || "unknown";
+    const calendarDate = data?.calendar_date || new Date().toISOString().split("T")[0];
+    const recordedAt = `${calendarDate}T00:00:00Z`;
 
-    // Phase 2 will add Supabase persistence here
+    console.log(`📩 [Junction] ${eventType} from ${provider} for user ${userId}`);
+
+    if (!userId || !data) {
+      console.warn("⚠️ [Junction] Missing userId or data, skipping");
+      return;
+    }
+
+    const { getNormalizer } = require("../services/normalizers");
+    const normalizer = getNormalizer(provider);
+
+    if (!normalizer) {
+      console.warn(`⚠️ [Junction] No normalizer for provider: ${provider}`);
+      return;
+    }
+
+    // Map event type to normalizer function
+    const eventMap = {
+      "daily.data.activity.created": "normalizeActivity",
+      "daily.data.sleep.created": "normalizeSleep",
+      "daily.data.body.created": "normalizeBody",
+      "daily.data.heartrate.created": "normalizeHeartRate",
+    };
+
+    const fnName = eventMap[eventType];
+    if (!fnName || typeof normalizer[fnName] !== "function") {
+      console.log(`📩 [Junction] No handler for ${eventType}, skipping`);
+      return;
+    }
+
+    const metrics = normalizer[fnName](data, calendarDate);
+
+    // Some providers include recovery data in sleep or activity events
+    if (typeof normalizer.normalizeRecovery === "function") {
+      const recoveryMetrics = normalizer.normalizeRecovery(data, calendarDate);
+      metrics.push(...recoveryMetrics);
+    }
+
+    if (metrics.length === 0) {
+      console.log(`📩 [Junction] No metrics extracted from ${eventType}`);
+      return;
+    }
+
+    // Normalize provider slug to our standard source names
+    const sourceMap = {
+      whoop: "whoop",
+      oura: "oura",
+      apple_health_kit: "apple_health",
+      apple_health: "apple_health",
+      eight_sleep: "8sleep",
+      "8sleep": "8sleep",
+    };
+    const source = sourceMap[provider] || provider;
+
+    const healthMetrics = require("../services/health-metrics");
+    const result = await healthMetrics.saveMetrics(userId, source, recordedAt, metrics);
+    console.log(`✅ [Junction] Saved ${result.saved} metrics (${result.skipped} skipped) from ${provider}/${eventType}`);
   } catch (err) {
     console.error("❌ [Junction Webhook] Error:", err.message);
   }
