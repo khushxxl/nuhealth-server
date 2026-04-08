@@ -17,7 +17,10 @@ function normalizeActivity(data, calendarDate) {
 function normalizeSleep(data, calendarDate) {
   const metrics = [];
   const add = (key, name, val, unit) => {
-    if (val != null && val !== 0) metrics.push({ category: "sleep", metric_key: key, metric_name: name, value_num: val, value_text: null, unit });
+    if (val != null) metrics.push({ category: "sleep", metric_key: key, metric_name: name, value_num: val, value_text: null, unit });
+  };
+  const addText = (key, name, val, unit) => {
+    if (val != null) metrics.push({ category: "sleep", metric_key: key, metric_name: name, value_num: null, value_text: String(val), unit });
   };
   // Junction uses "total" for stage-summed sleep, "duration" for total time tracked
   add("sleep_total", "Total Sleep", data.total || data.duration, "sec");
@@ -29,12 +32,13 @@ function normalizeSleep(data, calendarDate) {
   add("time_in_bed", "Time in Bed", data.time_in_bed || data.duration, "sec");
   add("sleep_hr_avg", "Avg HR (Sleep)", data.hr_average, "bpm");
   add("sleep_hr_lowest", "Lowest HR (Sleep)", data.hr_lowest, "bpm");
-  add("bedtime_start", "Bedtime Start", data.bedtime_start, "");
-  add("bedtime_stop", "Bedtime End", data.bedtime_stop, "");
+  addText("bedtime_start", "Bedtime Start", data.bedtime_start, "");
+  addText("bedtime_stop", "Bedtime End", data.bedtime_stop, "");
   return metrics;
 }
 
 function normalizeBody(data, calendarDate) {
+  // Body composition is handled by Biyo Scale (scale_records). Skipped intentionally.
   return [];
 }
 

@@ -304,7 +304,6 @@ router.post("/junction", async (req, res) => {
       return;
     }
 
-    // Map event type to normalizer function
     // Map event types to normalizer functions (handle both .created and .updated)
     const eventMap = {
       "daily.data.activity": "normalizeActivity",
@@ -321,10 +320,7 @@ router.post("/junction", async (req, res) => {
       return;
     }
 
-    console.log(`📩 [Junction] Raw data keys for ${eventType}:`, JSON.stringify(data, null, 2));
-
     const metrics = normalizer[fnName](data, calendarDate);
-    console.log(`📩 [Junction] Normalized ${metrics.length} metrics:`, metrics.map((m) => `${m.metric_key}=${m.value_num}`).join(", ") || "none");
 
     // Some providers include recovery data in sleep or activity events
     if (typeof normalizer.normalizeRecovery === "function") {
@@ -346,11 +342,16 @@ router.post("/junction", async (req, res) => {
       eight_sleep: "8sleep",
       "8sleep": "8sleep",
     };
-    const source = sourceMap[provider] || provider;
+    const source = sourceMap[provider];
+
+    if (!source) {
+      console.warn(`⚠️ [Junction] Unsupported provider after mapping: ${provider}`);
+      return;
+    }
 
     const healthMetrics = require("../services/health-metrics");
     const result = await healthMetrics.saveMetrics(userId, source, recordedAt, metrics);
-    console.log(`✅ [Junction] Saved ${result.saved} metrics (${result.skipped} skipped) from ${provider}/${eventType}`);
+    console.log(`✅ [Junction] Saved ${result.saved} metrics from ${source}/${eventType}`);
   } catch (err) {
     console.error("❌ [Junction Webhook] Error:", err.message);
   }

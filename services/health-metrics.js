@@ -91,18 +91,16 @@ async function saveMetrics(userId, source, recordedAt, metrics) {
     recorded_at: recordedAt,
   }));
 
-  const { data, error: dbError } = await supabase
+  const { error: dbError } = await supabase
     .from("health_metrics")
-    .upsert(rows, { onConflict: "user_id,source,metric_key,recorded_at", ignoreDuplicates: true })
-    .select("id");
+    .upsert(rows, { onConflict: "user_id,source,metric_key,recorded_at" });
 
   if (dbError) {
     console.error("❌ health_metrics upsert error:", dbError.message);
     throw dbError;
   }
 
-  const saved = data?.length || 0;
-  return { saved, skipped: rows.length - saved };
+  return { saved: rows.length, skipped: 0 };
 }
 
 /**
