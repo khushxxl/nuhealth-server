@@ -144,4 +144,26 @@ router.post("/junction/connect-demo", async (req, res) => {
   }
 });
 
+// GET /api/junction/connected-providers — Check which providers a user has connected
+router.get("/junction/connected-providers", async (req, res) => {
+  try {
+    const junction = getJunctionClient();
+    if (!junction) {
+      return error(res, "Junction service not configured", 503);
+    }
+
+    const { junctionUserId } = req.query;
+    if (!junctionUserId) {
+      return error(res, "junctionUserId is required", 400);
+    }
+
+    const user = await junction.user.get(junctionUserId);
+    const providers = user?.connectedSources || [];
+    return success(res, { providers });
+  } catch (err) {
+    console.error("❌ GET /api/junction/connected-providers error:", err.message);
+    return error(res, "Failed to fetch connected providers");
+  }
+});
+
 module.exports = router;
