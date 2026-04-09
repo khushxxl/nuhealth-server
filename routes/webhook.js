@@ -352,6 +352,20 @@ router.post("/junction", async (req, res) => {
     const healthMetrics = require("../services/health-metrics");
     const result = await healthMetrics.saveMetrics(userId, source, recordedAt, metrics);
     console.log(`✅ [Junction] Saved ${result.saved} metrics from ${source}/${eventType}`);
+
+    // Update last_sync_at on the wearable device record
+    try {
+      const { getServiceClient } = require("../services/supabase");
+      const supabase = getServiceClient();
+      const deviceName = `wearable:${source}`;
+      await supabase
+        .from("devices")
+        .update({ device_information: [{ provider: source, connected_at: null, last_sync_at: new Date().toISOString(), status: "active" }] })
+        .eq("user_id", userId)
+        .eq("device_name", deviceName);
+    } catch (syncErr) {
+      console.warn("⚠️ [Junction] Failed to update last_sync_at:", syncErr.message);
+    }
   } catch (err) {
     console.error("❌ [Junction Webhook] Error:", err.message);
   }
