@@ -142,12 +142,18 @@ async function getLatestByCategory(userId, category) {
   if (dbError) throw dbError;
   if (!data) return [];
 
-  // Group rows by metric_key, keeping only the latest per source
+  // Find the most recent date across all rows
+  const latestDate = data[0]?.recorded_at?.split("T")[0] || null;
+
+  // Only keep rows from the most recent date, one per source per metric
   const grouped = {};
   const seenSourceKey = new Set();
   for (const row of data) {
+    const rowDate = row.recorded_at?.split("T")[0];
+    if (rowDate !== latestDate) continue; // Skip older days
+
     const dedup = `${row.metric_key}::${row.source}`;
-    if (seenSourceKey.has(dedup)) continue; // Only keep latest per source
+    if (seenSourceKey.has(dedup)) continue;
     seenSourceKey.add(dedup);
 
     if (!grouped[row.metric_key]) grouped[row.metric_key] = [];

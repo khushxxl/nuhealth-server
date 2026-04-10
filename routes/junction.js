@@ -166,4 +166,27 @@ router.get("/junction/connected-providers", async (req, res) => {
   }
 });
 
+// POST /api/junction/register-provider — Register a manual provider (e.g. Apple Health via SDK)
+router.post("/junction/register-provider", async (req, res) => {
+  try {
+    const junction = getJunctionClient();
+    if (!junction) {
+      return error(res, "Junction service not configured", 503);
+    }
+
+    const { junctionUserId, provider } = req.body;
+    if (!junctionUserId || !provider) {
+      return error(res, "junctionUserId and provider are required", 400);
+    }
+
+    console.log(`🔗 [Junction] Registering manual provider: ${provider} for user ${junctionUserId}`);
+    const result = await junction.link.connectManualProvider(junctionUserId, provider);
+    console.log(`✅ [Junction] Provider ${provider} registered:`, JSON.stringify(result));
+    return success(res, result);
+  } catch (err) {
+    console.error("❌ POST /api/junction/register-provider error:", err.message, err.body || "");
+    return error(res, `Failed to register provider: ${err.message}`);
+  }
+});
+
 module.exports = router;

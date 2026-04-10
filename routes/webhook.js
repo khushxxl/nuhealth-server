@@ -296,7 +296,7 @@ router.post("/junction", async (req, res) => {
       return;
     }
 
-    const { getNormalizer } = require("../services/normalizers");
+    const { getNormalizer, extractEmbeddedHeartRate } = require("../services/normalizers");
     const normalizer = getNormalizer(provider);
 
     if (!normalizer) {
@@ -326,6 +326,14 @@ router.post("/junction", async (req, res) => {
     if (typeof normalizer.normalizeRecovery === "function") {
       const recoveryMetrics = normalizer.normalizeRecovery(data, calendarDate);
       metrics.push(...recoveryMetrics);
+    }
+
+    // Junction embeds heart rate inside the activity payload as a sub-object
+    // (avg_bpm, max_bpm, min_bpm, resting_bpm). Extract those as physiology
+    // metrics so they surface on the Body page regardless of whether a
+    // separate daily.data.heartrate event ever fires.
+    if (baseEvent === "daily.data.activity") {
+      metrics.push(...extractEmbeddedHeartRate(data));
     }
 
     if (metrics.length === 0) {
