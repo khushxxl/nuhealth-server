@@ -271,22 +271,150 @@ router.post("/superwall", async (req, res) => {
  * POST /webhooks/junction
  *
  * Receives Junction (Vital) wearable data events.
- * Phase 1: Log only — no DB writes.
+ * Normalizes metrics per provider and persists to health_metrics table.
  */
 router.post("/junction", async (req, res) => {
-  console.log(`📩 [Junction Webhook] Received request`);
-  console.log(`📩 [Junction Webhook] Full payload:`, JSON.stringify(req.body, null, 2));
+  // Respond immediately so Junction doesn't retry
   res.status(200).json({ received: true });
 
   try {
     const event = req.body;
-    console.log(`📩 [Junction Webhook] Event type: ${event.event_type}`, {
-      userId: event.user_id,
-      clientUserId: event.client_user_id,
-      data: event.data ? Object.keys(event.data) : "no data",
-    });
+    const eventType = event.event_type;
+    const data = event.data;
 
-    // Phase 2 will add Supabase persistence here
+    // client_user_id is either the raw Supabase user ID or "demo-<userId>"
+    const rawClientId = event.client_user_id || "";
+    const userId = rawClientId.startsWith("demo-") ? rawClientId.slice(5) : rawClientId;
+    const provider = data?.source?.provider || data?.provider_slug || "unknown";
+    const calendarDate = data?.calendar_date || new Date().toISOString().split("T")[0];
+    const recordedAt = `${calendarDate}T00:00:00Z`;
+
+    console.log(`📩 [Junction] ${eventType} from ${provider} for user ${userId}`);
+
+    // Historical backfill notifications are metadata-only (start_date, end_date, is_final).
+    // They don't carry actual metric data — skip them silently.
+    if (eventType.startsWith("historical.")) {
+      console.log(`📩 [Junction] Skipping historical notification: ${eventType}`);
+      return;
+    }
+
+    if (!userId || !data) {
+      console.warn("⚠️ [Junction] Missing userId or data, skipping");
+      return;
+    }
+
+    const { getNormalizer, extractEmbeddedHeartRate } = require("../services/normalizers");
+    const normalizer = getNormalizer(provider);
+
+    if (!normalizer) {
+      console.warn(`⚠️ [Junction] No normalizer for provider: ${provider}`);
+      return;
+    }
+
+    // Strip .created/.updated suffix to match
+    const baseEvent = eventType.replace(/\.(created|updated)$/, "");
+
+    // blood_oxygen arrives as an array of timestamped readings — handle
+    // it directly since it doesn't follow the per-provider normalizer shape.
+    if (baseEvent === "daily.data.blood_oxygen") {
+      const readings = Array.isArray(data?.data) ? data.data : [];
+      const values = readings
+        .map((r) => r.value)
+        .filter((v) => v != null && typeof v === "number");
+      if (values.length === 0) {
+        console.log("📩 [Junction] blood_oxygen event had no readings, skipping");
+        return;
+      }
+      const avg = Math.round(values.reduce((s, v) => s + v, 0) / values.length);
+      const metrics = [
+        { category: "physiology", metric_key: "spo2", metric_name: "Blood Oxygen (SpO2)", value_num: avg, value_text: null, unit: "%" },
+      ];
+
+      const sourceMap = {
+        whoop: "whoop", oura: "oura",
+        apple_health_kit: "apple_health", apple_health: "apple_health",
+        eight_sleep: "8sleep", "8sleep": "8sleep",
+      };
+      const source = sourceMap[provider];
+      if (!source) {
+        console.warn(`⚠️ [Junction] Unsupported provider: ${provider}`);
+        return;
+      }
+
+      const healthMetrics = require("../services/health-metrics");
+      const result = await healthMetrics.saveMetrics(userId, source, recordedAt, metrics);
+      console.log(`✅ [Junction] Saved SpO2 avg=${avg}% from ${source}/${eventType} (${values.length} readings)`);
+      return;
+    }
+
+    // Map event types to normalizer functions (handle both .created and .updated)
+    const eventMap = {
+      "daily.data.activity": "normalizeActivity",
+      "daily.data.sleep": "normalizeSleep",
+      "daily.data.body": "normalizeBody",
+      "daily.data.heartrate": "normalizeHeartRate",
+    };
+
+    const fnName = eventMap[baseEvent];
+    if (!fnName || typeof normalizer[fnName] !== "function") {
+      console.log(`📩 [Junction] No handler for ${eventType}, skipping`);
+      return;
+    }
+
+    const metrics = normalizer[fnName](data, calendarDate);
+
+    // Some providers include recovery data in sleep or activity events
+    if (typeof normalizer.normalizeRecovery === "function") {
+      const recoveryMetrics = normalizer.normalizeRecovery(data, calendarDate);
+      metrics.push(...recoveryMetrics);
+    }
+
+    // Junction embeds heart rate inside the activity payload as a sub-object
+    // (avg_bpm, max_bpm, min_bpm, resting_bpm). Extract those as physiology
+    // metrics so they surface on the Body page regardless of whether a
+    // separate daily.data.heartrate event ever fires.
+    if (baseEvent === "daily.data.activity") {
+      metrics.push(...extractEmbeddedHeartRate(data));
+    }
+
+    if (metrics.length === 0) {
+      console.log(`📩 [Junction] No metrics extracted from ${eventType}`);
+      return;
+    }
+
+    // Normalize provider slug to our standard source names
+    const sourceMap = {
+      whoop: "whoop",
+      oura: "oura",
+      apple_health_kit: "apple_health",
+      apple_health: "apple_health",
+      eight_sleep: "8sleep",
+      "8sleep": "8sleep",
+    };
+    const source = sourceMap[provider];
+
+    if (!source) {
+      console.warn(`⚠️ [Junction] Unsupported provider after mapping: ${provider}`);
+      return;
+    }
+
+    const healthMetrics = require("../services/health-metrics");
+    const result = await healthMetrics.saveMetrics(userId, source, recordedAt, metrics);
+    console.log(`✅ [Junction] Saved ${result.saved} metrics from ${source}/${eventType}`);
+
+    // Update last_sync_at on the wearable device record
+    try {
+      const { getServiceClient } = require("../services/supabase");
+      const supabase = getServiceClient();
+      const deviceName = `wearable:${source}`;
+      await supabase
+        .from("devices")
+        .update({ device_information: [{ provider: source, connected_at: null, last_sync_at: new Date().toISOString(), status: "active" }] })
+        .eq("user_id", userId)
+        .eq("device_name", deviceName);
+    } catch (syncErr) {
+      console.warn("⚠️ [Junction] Failed to update last_sync_at:", syncErr.message);
+    }
   } catch (err) {
     console.error("❌ [Junction Webhook] Error:", err.message);
   }
