@@ -11,6 +11,13 @@ function normalizeActivity(data, calendarDate) {
   add("exercise_time", "Exercise Time", data.active_seconds, "sec");
   add("stand_duration", "Stand Duration", data.stand_seconds, "sec");
   add("vo2_max", "VO2 Max", data.vo2_max, "mL/kg/min");
+
+  // Mobility metrics (Apple Health specific)
+  add("walking_speed", "Walking Speed", data.walking_speed, "m/s");
+  add("walking_step_length", "Walking Step Length", data.walking_step_length, "m");
+  add("walking_asymmetry", "Walking Asymmetry", data.walking_asymmetry, "%");
+  add("walking_double_support", "Double Support Time", data.walking_double_support_percentage || data.double_support_percentage, "%");
+  add("walking_steadiness", "Walking Steadiness", data.walking_steadiness, "%");
   return metrics;
 }
 

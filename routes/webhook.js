@@ -291,6 +291,13 @@ router.post("/junction", async (req, res) => {
 
     console.log(`📩 [Junction] ${eventType} from ${provider} for user ${userId}`);
 
+    // Historical backfill notifications are metadata-only (start_date, end_date, is_final).
+    // They don't carry actual metric data — skip them silently.
+    if (eventType.startsWith("historical.")) {
+      console.log(`📩 [Junction] Skipping historical notification: ${eventType}`);
+      return;
+    }
+
     if (!userId || !data) {
       console.warn("⚠️ [Junction] Missing userId or data, skipping");
       return;
@@ -304,6 +311,42 @@ router.post("/junction", async (req, res) => {
       return;
     }
 
+    // Strip .created/.updated suffix to match
+    const baseEvent = eventType.replace(/\.(created|updated)$/, "");
+
+    // blood_oxygen arrives as an array of timestamped readings — handle
+    // it directly since it doesn't follow the per-provider normalizer shape.
+    if (baseEvent === "daily.data.blood_oxygen") {
+      const readings = Array.isArray(data?.data) ? data.data : [];
+      const values = readings
+        .map((r) => r.value)
+        .filter((v) => v != null && typeof v === "number");
+      if (values.length === 0) {
+        console.log("📩 [Junction] blood_oxygen event had no readings, skipping");
+        return;
+      }
+      const avg = Math.round(values.reduce((s, v) => s + v, 0) / values.length);
+      const metrics = [
+        { category: "physiology", metric_key: "spo2", metric_name: "Blood Oxygen (SpO2)", value_num: avg, value_text: null, unit: "%" },
+      ];
+
+      const sourceMap = {
+        whoop: "whoop", oura: "oura",
+        apple_health_kit: "apple_health", apple_health: "apple_health",
+        eight_sleep: "8sleep", "8sleep": "8sleep",
+      };
+      const source = sourceMap[provider];
+      if (!source) {
+        console.warn(`⚠️ [Junction] Unsupported provider: ${provider}`);
+        return;
+      }
+
+      const healthMetrics = require("../services/health-metrics");
+      const result = await healthMetrics.saveMetrics(userId, source, recordedAt, metrics);
+      console.log(`✅ [Junction] Saved SpO2 avg=${avg}% from ${source}/${eventType} (${values.length} readings)`);
+      return;
+    }
+
     // Map event types to normalizer functions (handle both .created and .updated)
     const eventMap = {
       "daily.data.activity": "normalizeActivity",
@@ -312,8 +355,6 @@ router.post("/junction", async (req, res) => {
       "daily.data.heartrate": "normalizeHeartRate",
     };
 
-    // Strip .created/.updated suffix to match
-    const baseEvent = eventType.replace(/\.(created|updated)$/, "");
     const fnName = eventMap[baseEvent];
     if (!fnName || typeof normalizer[fnName] !== "function") {
       console.log(`📩 [Junction] No handler for ${eventType}, skipping`);
