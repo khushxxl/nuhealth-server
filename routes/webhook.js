@@ -331,7 +331,7 @@ router.post("/junction", async (req, res) => {
       ];
 
       const sourceMap = {
-        whoop: "whoop", oura: "oura",
+        whoop: "whoop", whoop_v2: "whoop", oura: "oura",
         apple_health_kit: "apple_health", apple_health: "apple_health",
         eight_sleep: "8sleep", "8sleep": "8sleep",
       };
@@ -385,6 +385,7 @@ router.post("/junction", async (req, res) => {
     // Normalize provider slug to our standard source names
     const sourceMap = {
       whoop: "whoop",
+      whoop_v2: "whoop",
       oura: "oura",
       apple_health_kit: "apple_health",
       apple_health: "apple_health",

@@ -119,6 +119,7 @@ router.put("/users/me/body-type", async (req, res) => {
 router.put("/users/me/push-token", async (req, res) => {
   try {
     const { token } = req.body;
+    console.log("📲 [Push] Received token:", token?.substring(0, 40), "...", "for", req.user?.email);
     if (!token) {
       return error(res, "token is required", 400);
     }
