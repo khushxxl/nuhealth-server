@@ -33,6 +33,7 @@ function extractEmbeddedHeartRate(data) {
 
 const normalizers = {
   whoop,
+  whoop_v2: whoop,
   oura,
   apple_health_kit: appleHealth,
   apple_health: appleHealth,
