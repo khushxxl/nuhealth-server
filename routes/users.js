@@ -115,11 +115,11 @@ router.put("/users/me/body-type", async (req, res) => {
   }
 });
 
-// PUT /api/users/me/push-token - Update push notification token
+// PUT /api/users/me/push-token - Update push notification token + device info
 router.put("/users/me/push-token", async (req, res) => {
   try {
-    const { token } = req.body;
-    console.log("📲 [Push] Received token:", token?.substring(0, 40), "...", "for", req.user?.email);
+    const { token, deviceOs, appVersion } = req.body;
+    console.log("📲 [Push] Received token:", token?.substring(0, 40), "...", "for", req.user?.email, "| OS:", deviceOs, "| App:", appVersion);
     if (!token) {
       return error(res, "token is required", 400);
     }
@@ -136,9 +136,13 @@ router.put("/users/me/push-token", async (req, res) => {
       return error(res, "User not found", 404);
     }
 
+    const updateFields = { notification_id: token };
+    if (deviceOs) updateFields.device_os = deviceOs;
+    if (appVersion) updateFields.app_version = appVersion;
+
     const { error: dbError } = await supabase
       .from("users")
-      .update({ notification_id: token })
+      .update(updateFields)
       .eq("id", userData.id);
 
     if (dbError) {

@@ -1,5 +1,6 @@
 const OpenAI = require("openai");
 const { OPENAI_API_KEY } = require("../config/constants");
+const { getServiceClient } = require("./supabase");
 
 // Initialize OpenAI client
 let openai = null;
@@ -15,9 +16,82 @@ if (OPENAI_API_KEY) {
   console.log("   Set OPEN_AI_API environment variable");
 }
 
+// ─── Prompt Cache ─────────────────────────────────────────────────────────────
+
+const promptCache = {};
+let lastCacheTime = 0;
+const CACHE_TTL = 60 * 1000; // 60 seconds
+
+async function getPrompt(id) {
+  const now = Date.now();
+
+  if (promptCache[id] && now - lastCacheTime < CACHE_TTL) {
+    return promptCache[id];
+  }
+
+  const supabase = getServiceClient();
+  if (!supabase) {
+    console.warn("Supabase not configured, using cached prompts");
+    return promptCache[id] || null;
+  }
+
+  try {
+    const { data, error } = await supabase.from("ai_prompts").select("*");
+    if (error) {
+      console.error("Failed to fetch prompts:", error.message);
+      return promptCache[id] || null;
+    }
+
+    for (const row of data) {
+      promptCache[row.id] = row;
+    }
+    lastCacheTime = now;
+  } catch (err) {
+    console.error("Prompt fetch error:", err.message);
+  }
+
+  return promptCache[id] || null;
+}
+
+/**
+ * Interpolate ${variable} placeholders in a prompt template
+ */
+function interpolatePrompt(template, vars) {
+  if (!template) return template;
+  return template.replace(/\$\{(\w+(?:\.\w+)*)}/g, (match, key) => {
+    return vars[key] !== undefined ? vars[key] : match;
+  });
+}
+
+// ─── Hardcoded fallback prompts (used if Supabase is unavailable) ─────────────
+
+const FALLBACK_SYSTEM_PROMPT =
+  "You are a helpful health and wellness coach that provides encouraging, concise feedback about body composition metrics. Always respond with valid JSON only.";
+
+const FALLBACK_USER_PROMPT = `You are a health and wellness coach. Generate a summary for the "\${goalName}" goal card based on body composition metrics from the last two weeks.
+
+\${metricsText}
+
+RULES:
+- Never use "pp" in front of any metric name. Use plain names only: Weight, BMI, Heart Rate, BMR, Muscle, Fat, etc.
+- \${weightUnitInstruction}
+
+Generate a summary with:
+1. HEADER: A short, encouraging header (25-35 characters including spaces).
+2. BODY: A 2-line summary (160-190 characters total) reviewing trends over the last two weeks with specific numbers.
+
+Format your response as JSON:
+{
+  "header": "Header text here",
+  "body": "Line 1 text\\nLine 2 text"
+}
+
+Only include metrics that are in the provided list. Be specific with numbers and trends.`;
+
+// ─── Metric Helpers ───────────────────────────────────────────────────────────
+
 const KG_TO_LBS = 2.20462;
 
-/** Weight-related metric keys (values in kg in source data) */
 const WEIGHT_KG_KEYS = new Set([
   "ppWeightKg",
   "ppMuscleKg",
@@ -26,21 +100,14 @@ const WEIGHT_KG_KEYS = new Set([
   "ppBodySkeletalKg",
 ]);
 
-/**
- * Calculate percentage change between two values
- */
 function calculatePercentageChange(oldValue, newValue) {
   if (!oldValue || oldValue === 0) return null;
   return ((newValue - oldValue) / oldValue) * 100;
 }
 
-/**
- * Get display name for metric key (never use "pp" in summaries)
- */
 function getMetricDisplayName(key) {
   if (!key || typeof key !== "string") return key;
   const withoutPp = key.replace(/^pp/, "");
-  // Humanize: ppWeightKg -> Weight (kg), ppHeartRate -> Heart Rate
   const label = withoutPp
     .replace(/([A-Z])/g, " $1")
     .replace(/^./, (s) => s.toUpperCase())
@@ -48,9 +115,6 @@ function getMetricDisplayName(key) {
   return label;
 }
 
-/**
- * Convert a copy of metrics to lbs for weight-related keys (source in kg)
- */
 function convertMetricsToLbs(metrics) {
   if (!metrics || typeof metrics !== "object") return metrics;
   const out = { ...metrics };
@@ -62,11 +126,6 @@ function convertMetricsToLbs(metrics) {
   return out;
 }
 
-/**
- * Format metric value with unit. unit is 'kg' or 'lbs'.
- * For weight keys, when unit is 'lbs' the value is already in lbs (caller converted).
- * Never use "pp" in the metric name (handled by caller using getMetricDisplayName).
- */
 function formatMetricValue(key, value, unit = "kg") {
   if (value === null || value === undefined) return null;
 
@@ -92,16 +151,7 @@ function formatMetricValue(key, value, unit = "kg") {
   return u ? `${value} ${u}` : value.toString();
 }
 
-/**
- * Build metrics comparison text for prompt. Uses display names (no "pp").
- * unit is 'kg' or 'lbs' for weight-related values.
- */
-function buildMetricsComparisonText(
-  currentMetrics,
-  twoWeeksAgoMetrics,
-  metricKeys,
-  unit = "kg"
-) {
+function buildMetricsComparisonText(currentMetrics, twoWeeksAgoMetrics, metricKeys, unit = "kg") {
   let text = "Current metrics (today):\n";
   const changes = [];
 
@@ -135,25 +185,15 @@ function buildMetricsComparisonText(
   if (changes.length > 0) {
     text += "\nKey changes over last two weeks:\n";
     changes.slice(0, 5).forEach((c) => {
-      text += `- ${c.key}: ${c.direction} by ${Math.abs(c.change).toFixed(
-        1
-      )} (${c.percentChange.toFixed(1)}%)\n`;
+      text += `- ${c.key}: ${c.direction} by ${Math.abs(c.change).toFixed(1)} (${c.percentChange.toFixed(1)}%)\n`;
     });
   }
 
   return text;
 }
 
-/**
- * Generate AI summary for a goal card with header and body (one unit: kg or lbs)
- * @param {Object} params - Parameters for summary generation
- * @param {string} params.goalName - Name of the goal (e.g., "General Health")
- * @param {Object} params.currentMetrics - Current metric values (in kg for weight keys)
- * @param {Object} params.twoWeeksAgoMetrics - Metrics from two weeks ago (optional)
- * @param {Array} params.metricKeys - Array of metric keys for this goal
- * @param {'kg'|'lbs'} params.unit - Use 'kg' or 'lbs' for weight-related values in the summary
- * @returns {Promise<Object|null>} Generated summary with header and body or null if failed
- */
+// ─── Goal Summary Generation ──────────────────────────────────────────────────
+
 async function generateGoalSummary({
   goalName,
   currentMetrics,
@@ -192,50 +232,34 @@ async function generateGoalSummary({
         ? "Use only pounds (lb/lbs) for all weight-related values in the summary."
         : "Use only kilograms (kg) for all weight-related values in the summary.";
 
-    const prompt = `You are a health and wellness coach. Generate a summary for the "${goalName}" goal card based on body composition metrics from the last two weeks.
+    const vars = { goalName, metricsText, weightUnitInstruction };
 
-${metricsText}
+    // Fetch prompts from Supabase
+    const systemPromptRow = await getPrompt("goal-summary-system");
+    const userPromptRow = await getPrompt("goal-summary-user");
 
-RULES:
-- Never use "pp" in front of any metric name. Use plain names only: Weight, BMI, Heart Rate, BMR, Muscle, Fat, etc.
-- ${weightUnitInstruction}
+    const systemContent = systemPromptRow
+      ? systemPromptRow.system_prompt
+      : FALLBACK_SYSTEM_PROMPT;
 
-Generate a summary with:
-1. HEADER: A short, encouraging header (25-35 characters including spaces). Examples: "Your overall trends this week", "Recovery score on the rise", "Daily energy adapting well"
+    const userTemplate = userPromptRow
+      ? (userPromptRow.user_prompt || userPromptRow.system_prompt)
+      : FALLBACK_USER_PROMPT;
 
-2. BODY: A 2-line summary (160-190 characters total, or up to 220-240 if 3 lines needed) that:
-   - Reviews trends over the last two weeks
-   - Uses specific numbers with units (${unit === "lbs" ? "lb/lbs" : "kg"}, %, bpm, kcal, points, etc.) — never use "pp" before any metric
-   - Celebrates wins and improvements
-   - Encourages on areas needing attention
-   - Contextualizes why changes relate to the goal
-   - Mentions "over the last two weeks" or "in the past two weeks"
-   - Focuses on well-known metrics but doesn't ignore lesser-known ones
-   - Uses percentage changes and quantity changes (e.g., "by about X ${unit === "lbs" ? "lb" : "kg"} (Y%)")
+    const userContent = interpolatePrompt(userTemplate, vars);
 
-Format your response as JSON:
-{
-  "header": "Header text here",
-  "body": "Line 1 text\nLine 2 text"
-}
-
-Only include metrics that are in the provided list. Be specific with numbers and trends.`;
+    const model = userPromptRow?.model || "gpt-4o-mini";
+    const temperature = userPromptRow?.temperature ?? 0.7;
+    const maxTokens = userPromptRow?.max_tokens || 300;
 
     const response = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
+      model,
       messages: [
-        {
-          role: "system",
-          content:
-            "You are a helpful health and wellness coach that provides encouraging, concise feedback about body composition metrics. Always respond with valid JSON only.",
-        },
-        {
-          role: "user",
-          content: prompt,
-        },
+        { role: "system", content: systemContent },
+        { role: "user", content: userContent },
       ],
-      max_tokens: 300,
-      temperature: 0.7,
+      max_tokens: maxTokens,
+      temperature,
       response_format: { type: "json_object" },
     });
 
@@ -251,7 +275,6 @@ Only include metrics that are in the provided list. Be specific with numbers and
         }
       } catch (parseError) {
         console.error(`❌ Error parsing JSON for ${goalName}:`, parseError);
-        // Fallback: try to extract header and body from text
         const lines = content.split("\n").filter((line) => line.trim());
         if (lines.length >= 2) {
           return {
@@ -273,10 +296,7 @@ Only include metrics that are in the provided list. Be specific with numbers and
 }
 
 /**
- * Generate summaries for all 6 goal cards
- * @param {Object} currentMetrics - Current metric values from body data
- * @param {Object} twoWeeksAgoMetrics - Metrics from two weeks ago (optional)
- * @returns {Promise<Object>} Object with summaries (header + body) for each goal
+ * Generate summaries for all 7 goal cards
  */
 async function generateAllGoalSummaries(
   currentMetrics,
@@ -284,118 +304,34 @@ async function generateAllGoalSummaries(
 ) {
   const summaries = {};
 
-  // Goal card configurations with all relevant metrics
-  // Mapping user-provided metric names to actual body data keys (pp prefix)
   const goalConfigs = [
     {
       name: "Overview",
-      keys: [
-        "ppWeightKg",
-        "ppHeartRate",
-        "ppBMI",
-        "ppWaterPercentage",
-        "ppBodyAge",
-        "ppBodyScore",
-        // Note: Arm/Leg/Trunk metrics would need specific keys if available in body data
-      ],
+      keys: ["ppWeightKg", "ppHeartRate", "ppBMI", "ppWaterPercentage", "ppBodyAge", "ppBodyScore"],
     },
     {
       name: "Recovery",
-      keys: [
-        "ppWeightKg",
-        "ppHeartRate",
-        "ppBMR",
-        "ppBMI",
-        "ppMusclePercentage",
-        "ppMuscleKg",
-        "ppProteinPercentage",
-        "ppProteinKg",
-        "ppWaterPercentage",
-        "ppBodySkeletalKg",
-        "ppBodyScore",
-      ],
+      keys: ["ppWeightKg", "ppHeartRate", "ppBMR", "ppBMI", "ppMusclePercentage", "ppMuscleKg", "ppProteinPercentage", "ppProteinKg", "ppWaterPercentage", "ppBodySkeletalKg", "ppBodyScore"],
     },
     {
       name: "Energy",
-      keys: [
-        "ppWeightKg",
-        "ppHeartRate",
-        "ppBMR",
-        "ppMusclePercentage",
-        "ppMuscleKg",
-        "ppProteinPercentage",
-        "ppProteinKg",
-        "ppWaterPercentage",
-        "ppBodySkeletalKg",
-        "ppBodyAge",
-        "ppBodyScore",
-      ],
+      keys: ["ppWeightKg", "ppHeartRate", "ppBMR", "ppMusclePercentage", "ppMuscleKg", "ppProteinPercentage", "ppProteinKg", "ppWaterPercentage", "ppBodySkeletalKg", "ppBodyAge", "ppBodyScore"],
     },
     {
       name: "Longevity",
-      keys: [
-        "ppWeightKg",
-        "ppHeartRate",
-        "ppBMR",
-        "ppBMI",
-        "ppFat",
-        "ppFatKg",
-        "ppMusclePercentage",
-        "ppMuscleKg",
-        "ppProteinPercentage",
-        "ppProteinKg",
-        "ppWaterPercentage",
-        "ppBodyAge",
-        "ppBodyScore",
-      ],
+      keys: ["ppWeightKg", "ppHeartRate", "ppBMR", "ppBMI", "ppFat", "ppFatKg", "ppMusclePercentage", "ppMuscleKg", "ppProteinPercentage", "ppProteinKg", "ppWaterPercentage", "ppBodyAge", "ppBodyScore"],
     },
     {
       name: "Weight Loss",
-      keys: [
-        "ppWeightKg",
-        "ppHeartRate",
-        "ppBMR",
-        "ppBMI",
-        "ppFat",
-        "ppFatKg",
-        "ppMusclePercentage",
-        "ppMuscleKg",
-        "ppWaterPercentage",
-        "ppBodyAge",
-        "ppBodyScore",
-      ],
+      keys: ["ppWeightKg", "ppHeartRate", "ppBMR", "ppBMI", "ppFat", "ppFatKg", "ppMusclePercentage", "ppMuscleKg", "ppWaterPercentage", "ppBodyAge", "ppBodyScore"],
     },
     {
       name: "Pain Relief",
-      keys: [
-        "ppHeartRate",
-        "ppBMR",
-        "ppFat",
-        "ppFatKg",
-        "ppMusclePercentage",
-        "ppMuscleKg",
-        "ppWaterPercentage",
-        "ppBodySkeletalKg",
-        "ppBodyScore",
-      ],
+      keys: ["ppHeartRate", "ppBMR", "ppFat", "ppFatKg", "ppMusclePercentage", "ppMuscleKg", "ppWaterPercentage", "ppBodySkeletalKg", "ppBodyScore"],
     },
     {
       name: "General Health",
-      keys: [
-        "ppWeightKg",
-        "ppHeartRate",
-        "ppBMR",
-        "ppBMI",
-        "ppFat",
-        "ppFatKg",
-        "ppMusclePercentage",
-        "ppMuscleKg",
-        "ppProteinPercentage",
-        "ppProteinKg",
-        "ppWaterPercentage",
-        "ppBodyAge",
-        "ppBodyScore",
-      ],
+      keys: ["ppWeightKg", "ppHeartRate", "ppBMR", "ppBMI", "ppFat", "ppFatKg", "ppMusclePercentage", "ppMuscleKg", "ppProteinPercentage", "ppProteinKg", "ppWaterPercentage", "ppBodyAge", "ppBodyScore"],
     },
   ];
 
@@ -404,7 +340,6 @@ async function generateAllGoalSummaries(
     body: "Progress tracking in progress...",
   };
 
-  // Generate summaries for each goal: one in kg, one in lbs
   for (const config of goalConfigs) {
     const [summaryKg, summaryLbs] = await Promise.all([
       generateGoalSummary({
