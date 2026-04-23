@@ -24,6 +24,7 @@ const junctionRoutes = require("./routes/junction");
 const healthMetricsRoutes = require("./routes/health-metrics");
 const webhookRoutes = require("./routes/webhook");
 const aiRoutes = require("./routes/ai");
+const actionPlanRoutes = require("./routes/action-plans");
 const { getSupabaseClient } = require("./services/supabase");
 const { OPENAI_API_KEY } = require("./config/constants");
 
@@ -339,6 +340,7 @@ app.use("/api", metricRoutes);
 app.use("/api", junctionRoutes);
 app.use("/api", healthMetricsRoutes);
 app.use("/api", aiRoutes);
+app.use("/api", actionPlanRoutes);
 
 // Wi-Fi Provisioning: Device registration endpoint during Wi-Fi setup
 // This endpoint is called during the scale's Wi-Fi provisioning step
