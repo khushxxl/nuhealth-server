@@ -416,6 +416,29 @@ router.post("/junction", async (req, res) => {
     } catch (syncErr) {
       console.warn("⚠️ [Junction] Failed to update last_sync_at:", syncErr.message);
     }
+
+    // Mode A: Trigger daily plan generation on sleep data
+    if (baseEvent === "daily.data.sleep") {
+      try {
+        const { getServiceClient } = require("../services/supabase");
+        const supabase = getServiceClient();
+        const { data: activePlan } = await supabase
+          .from("action_plans")
+          .select("id")
+          .eq("user_id", userId)
+          .eq("status", "active")
+          .eq("generation_mode", "wearable_triggered")
+          .maybeSingle();
+
+        if (activePlan) {
+          const { queueSleepTriggered } = require("../services/plan-queue");
+          await queueSleepTriggered(userId, activePlan.id);
+          console.log(`😴 [Junction] Queued daily plan for user ${userId} after sleep data`);
+        }
+      } catch (planErr) {
+        console.warn("⚠️ [Junction] Daily plan trigger failed (non-blocking):", planErr.message);
+      }
+    }
   } catch (err) {
     console.error("❌ [Junction Webhook] Error:", err.message);
   }

@@ -25,6 +25,7 @@ const healthMetricsRoutes = require("./routes/health-metrics");
 const webhookRoutes = require("./routes/webhook");
 const aiRoutes = require("./routes/ai");
 const actionPlanRoutes = require("./routes/action-plans");
+const { initPlanQueue } = require("./services/plan-queue");
 const { getSupabaseClient } = require("./services/supabase");
 const { OPENAI_API_KEY } = require("./config/constants");
 
@@ -461,6 +462,13 @@ app.listen(PORT, "0.0.0.0", () => {
   const serverUrl = process.env.RAILWAY_PUBLIC_DOMAIN
     ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
     : `http://0.0.0.0:${PORT}`;
+
+  // Initialize BullMQ plan queue after server is ready
+  if (process.env.REDIS_URL) {
+    initPlanQueue();
+  } else {
+    console.log("⚠️  REDIS_URL not set — daily plan scheduler disabled");
+  }
 
   console.log(`\n🚀 Lefu WiFi Torre Scale Server`);
   console.log(`   Listening on: ${serverUrl}`);
