@@ -8,6 +8,7 @@ const {
   findDeviceOwnerByScaleUserId,
 } = require("../services/supabase");
 const { generateSummariesForRecord } = require("../utils/summaryGenerator");
+const { generateAutoRAIForRecord } = require("../utils/autoRAIGenerator");
 const { sendPushNotification } = require("../services/notification");
 
 /**
@@ -83,6 +84,17 @@ async function handleRecord(req, res) {
             );
             // Don't fail the request if summaries fail
           }
+        }
+
+        // Auto-generate RAI insights/tips for Pro users (non-blocking)
+        if (saveResult.recordId && processResult.mutatedBodyData && userId) {
+          generateAutoRAIForRecord({
+            userId,
+            recordId: saveResult.recordId,
+            mutatedBodyData: processResult.mutatedBodyData,
+          }).catch((err) =>
+            console.error("⚠️  Auto RAI generation failed:", err.message),
+          );
         }
 
         // Send push notification to user about new measurement

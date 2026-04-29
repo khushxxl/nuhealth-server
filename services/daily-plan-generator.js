@@ -74,6 +74,7 @@ async function gatherHealthContext(userId, supabase) {
     scale: null,
     checkin: null,
     yesterdayCompletion: "No data",
+    liveUpdatesYesterday: [],
   };
 
   try {
@@ -173,6 +174,29 @@ async function gatherHealthContext(userId, supabase) {
       const completed = yesterdayTasks.filter((t) => t.completed).length;
       context.yesterdayCompletion = `${completed}/${yesterdayTasks.length} tasks completed`;
     }
+
+    // Yesterday's live updates (real-time signals from prior day)
+    try {
+      const yStart = new Date();
+      yStart.setDate(yStart.getDate() - 1);
+      yStart.setHours(0, 0, 0, 0);
+      const tStart = new Date();
+      tStart.setHours(0, 0, 0, 0);
+
+      const { data: yesterdayUpdates } = await supabase
+        .from("live_updates")
+        .select("category, message, metric_key, value_num, created_at")
+        .eq("user_id", userId)
+        .gte("created_at", yStart.toISOString())
+        .lt("created_at", tStart.toISOString())
+        .order("created_at", { ascending: true });
+
+      if (yesterdayUpdates?.length) {
+        context.liveUpdatesYesterday = yesterdayUpdates;
+      }
+    } catch (luErr) {
+      console.warn("[DailyPlan] Failed to fetch yesterday's live updates:", luErr.message);
+    }
   } catch (err) {
     console.error("[DailyPlan] Error gathering health context:", err.message);
   }
@@ -252,6 +276,7 @@ async function generateDailyTasks(userId, planId, triggerType) {
     answers: JSON.stringify(plan.answers),
     healthContext: JSON.stringify(healthContext, null, 2),
     yesterdayCompletion: healthContext.yesterdayCompletion,
+    yesterdayLiveUpdates: JSON.stringify(healthContext.liveUpdatesYesterday || []),
   };
 
   const systemContent = promptRow.system_prompt;
@@ -339,6 +364,15 @@ async function generateDailyTasks(userId, planId, triggerType) {
     await sendPushNotification(user.notification_id, title, body).catch((err) =>
       console.warn("[DailyPlan] Push notification failed:", err.message)
     );
+  }
+
+  // 10. Create a live update for the feed
+  try {
+    const liveUpdates = require("./live-updates");
+    const sleepScore = healthContext.sleep?.find((m) => m.key === "sleep_score")?.value;
+    await liveUpdates.planGenerated(userId, tasksToInsert.length, sleepScore);
+  } catch (err) {
+    console.warn("[DailyPlan] Live update creation failed:", err.message);
   }
 
   console.log(`✅ [DailyPlan] Generated ${tasksToInsert.length} tasks for day ${dayNumber}`);

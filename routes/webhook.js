@@ -403,6 +403,21 @@ router.post("/junction", async (req, res) => {
     const result = await healthMetrics.saveMetrics(userId, source, recordedAt, metrics);
     console.log(`✅ [Junction] Saved ${result.saved} metrics from ${source}/${eventType}`);
 
+    // Generate live updates for the home feed
+    try {
+      const liveUpdates = require("../services/live-updates");
+      let category = null;
+      if (baseEvent === "daily.data.sleep") category = "sleep";
+      else if (baseEvent === "daily.data.activity") category = "activity";
+      else if (baseEvent === "daily.data.heartrate") category = "physiology";
+
+      if (category) {
+        await liveUpdates.processMetrics(userId, category, metrics);
+      }
+    } catch (luErr) {
+      console.warn("⚠️ [Junction] Live update generation failed:", luErr.message);
+    }
+
     // Update last_sync_at on the wearable device record
     try {
       const { getServiceClient } = require("../services/supabase");

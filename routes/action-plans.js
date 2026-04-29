@@ -264,6 +264,25 @@ router.patch("/action-plans/tasks/:taskId", async (req, res) => {
 
     if (updateErr) return error(res, "Failed to update task", 500);
 
+    // Check if all tasks for today are now completed
+    if (completed) {
+      try {
+        const today = new Date().toISOString().split("T")[0];
+        const { data: todaysTasks } = await supabase
+          .from("action_plan_tasks")
+          .select("completed")
+          .eq("plan_id", task.plan_id)
+          .eq("task_date", today);
+
+        if (todaysTasks?.length && todaysTasks.every((t) => t.completed)) {
+          const liveUpdates = require("../services/live-updates");
+          await liveUpdates.tasksCompleted(userId, todaysTasks.length);
+        }
+      } catch (err) {
+        console.warn("[ActionPlan] Completion live update failed:", err.message);
+      }
+    }
+
     return success(res, { taskId, completed: !!completed });
   } catch (err) {
     console.error("Task toggle error:", err.message);

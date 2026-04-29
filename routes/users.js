@@ -156,6 +156,51 @@ router.put("/users/me/push-token", async (req, res) => {
   }
 });
 
+// GET /api/users/me/notification-preferences - Get user notification preferences
+router.get("/users/me/notification-preferences", async (req, res) => {
+  try {
+    const supabase = getServiceClient();
+    const { data, error: dbErr } = await supabase
+      .from("users")
+      .select("live_updates_notifications")
+      .eq("id", req.user.id)
+      .single();
+
+    if (dbErr) return error(res, dbErr.message, 500);
+
+    return success(res, {
+      liveUpdates: data?.live_updates_notifications ?? true,
+    });
+  } catch (err) {
+    console.error("❌ GET /api/users/me/notification-preferences error:", err.message);
+    return error(res, "Failed to fetch notification preferences");
+  }
+});
+
+// PUT /api/users/me/notification-preferences - Update notification preferences
+// Body: { liveUpdates: boolean }
+router.put("/users/me/notification-preferences", async (req, res) => {
+  try {
+    const { liveUpdates } = req.body;
+    if (typeof liveUpdates !== "boolean") {
+      return error(res, "liveUpdates (boolean) is required", 400);
+    }
+
+    const supabase = getServiceClient();
+    const { error: dbErr } = await supabase
+      .from("users")
+      .update({ live_updates_notifications: liveUpdates })
+      .eq("id", req.user.id);
+
+    if (dbErr) return error(res, dbErr.message, 500);
+
+    return success(res, { liveUpdates });
+  } catch (err) {
+    console.error("❌ PUT /api/users/me/notification-preferences error:", err.message);
+    return error(res, "Failed to update notification preferences");
+  }
+});
+
 // GET /api/users/me/trips - Get user plans/trips
 router.get("/users/me/trips", async (req, res) => {
   try {
