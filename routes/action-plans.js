@@ -8,13 +8,64 @@ const {
   removeScheduledPlan,
   queueImmediateGeneration,
 } = require("../services/plan-queue");
+const { resolveTargetSpec } = require("../utils/planTargetParser");
 
-// ─── Helper ───────────────────────────────────────────────────────────────────
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function addDays(dateStr, days) {
   const d = new Date(dateStr);
   d.setDate(d.getDate() + days);
   return d.toISOString().split("T")[0];
+}
+
+/**
+ * Look up the user's most recent scale_measurement value for a given
+ * body_param_key (e.g. "ppWeightKg"). Returns null if there's no data.
+ */
+async function getLatestMetricValue(supabase, userId, bodyParamKey) {
+  if (!supabase || !userId || !bodyParamKey) return null;
+  try {
+    const { data, error: err } = await supabase
+      .from("scale_measurements")
+      .select(
+        "current_value_num, scale_record_id, scale_records!inner(scale_user_id, created_at)",
+      )
+      .eq("body_param_key", bodyParamKey)
+      .eq("scale_records.scale_user_id", userId)
+      .order("scale_records(created_at)", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (err || !data) return null;
+    const v = data.current_value_num;
+    return typeof v === "number" && Number.isFinite(v) ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Compute progress percentage (0-100) using:
+ *   progress = (baseline - current) / (baseline - target) * 100   for decrease
+ *   progress = (current - baseline) / (target - baseline) * 100   for increase
+ *
+ * Clamped to [0, 100]. Returns null if any input is missing or denominator is 0.
+ */
+function computeMetricProgress({ baseline, current, target, direction }) {
+  if (
+    typeof baseline !== "number" ||
+    typeof current !== "number" ||
+    typeof target !== "number"
+  ) {
+    return null;
+  }
+  const numerator =
+    direction === "increase" ? current - baseline : baseline - current;
+  const denominator =
+    direction === "increase" ? target - baseline : baseline - target;
+  if (denominator === 0) return null;
+  const pct = (numerator / denominator) * 100;
+  return Math.max(0, Math.min(100, Math.round(pct)));
 }
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
@@ -61,6 +112,43 @@ router.post("/action-plans/generate", async (req, res) => {
     const totalDays = timelineWeeks * 7;
     const endDate = addDays(startDate, totalDays - 1);
 
+    // Capture baseline + compute explicit target from questionnaire answer
+    let baselineValue = null;
+    let targetValue = null;
+    let trackedMetricKey = null;
+    let targetDirection = null;
+
+    const targetSpec = resolveTargetSpec(goal, answers);
+    if (targetSpec) {
+      const baseline = await getLatestMetricValue(
+        supabase,
+        userId,
+        targetSpec.trackedMetricKey,
+      );
+      if (typeof baseline === "number" && Number.isFinite(baseline)) {
+        baselineValue = baseline;
+        // Prefer absolute target from the questionnaire; fall back to applying
+        // a delta to the baseline (legacy answer formats).
+        if (typeof targetSpec.targetKg === "number") {
+          targetValue = targetSpec.targetKg;
+        } else if (typeof targetSpec.deltaKg === "number") {
+          targetValue =
+            targetSpec.direction === "decrease"
+              ? Math.max(0, baseline - targetSpec.deltaKg)
+              : baseline + targetSpec.deltaKg;
+        }
+        trackedMetricKey = targetSpec.trackedMetricKey;
+        targetDirection = targetSpec.direction;
+        console.log(
+          `🎯 [ActionPlan] Baseline=${baselineValue}kg, target=${targetValue}kg (${targetDirection}) on ${trackedMetricKey}`,
+        );
+      } else {
+        console.log(
+          "[ActionPlan] No scale baseline found, progress will fall back to time-based",
+        );
+      }
+    }
+
     // Insert plan
     const { data: plan, error: planErr } = await supabase
       .from("action_plans")
@@ -78,6 +166,10 @@ router.post("/action-plans/generate", async (req, res) => {
         plan_time: planTime || "07:00",
         generation_mode: generationMode,
         timezone: timezone || "UTC",
+        baseline_value: baselineValue,
+        target_value: targetValue,
+        tracked_metric_key: trackedMetricKey,
+        target_direction: targetDirection,
       }])
       .select()
       .single();
@@ -144,12 +236,39 @@ router.get("/action-plans/current", async (req, res) => {
     const dayNumber = Math.floor((todayMs - startMs) / (1000 * 60 * 60 * 24)) + 1;
     const totalDays = plan.timeline_weeks * 7;
     const currentWeek = Math.ceil(dayNumber / 7);
-    const progress = Math.min(Math.round((dayNumber / totalDays) * 100), 100);
+
+    // Progress: prefer metric-based (baseline → target) when the plan tracks a
+    // body composition metric. Falls back to time-based for goals without a
+    // measurable scale signal (sleep, recovery) or when no baseline was captured.
+    let progress = Math.min(Math.round((dayNumber / totalDays) * 100), 100);
+    let progressSource = "time";
+    let metricCurrentValue = null;
+
+    if (plan.tracked_metric_key && plan.baseline_value != null && plan.target_value != null) {
+      const current = await getLatestMetricValue(
+        supabase,
+        userId,
+        plan.tracked_metric_key,
+      );
+      if (typeof current === "number") {
+        metricCurrentValue = current;
+        const metricProgress = computeMetricProgress({
+          baseline: Number(plan.baseline_value),
+          current,
+          target: Number(plan.target_value),
+          direction: plan.target_direction || "decrease",
+        });
+        if (metricProgress != null) {
+          progress = metricProgress;
+          progressSource = "metric";
+        }
+      }
+    }
 
     // Get today's tasks
     const { data: tasks } = await supabase
       .from("action_plan_tasks")
-      .select("id, label, completed, sort_order")
+      .select("id, label, completed, sort_order, category, rationale")
       .eq("plan_id", plan.id)
       .eq("task_date", today)
       .order("sort_order", { ascending: true });
@@ -183,8 +302,14 @@ router.get("/action-plans/current", async (req, res) => {
         status: plan.status,
         generationMode: plan.generation_mode,
         useWearables: plan.use_wearables,
+        baselineValue: plan.baseline_value,
+        targetValue: plan.target_value,
+        trackedMetricKey: plan.tracked_metric_key,
+        targetDirection: plan.target_direction,
       },
       progress,
+      progressSource, // "metric" | "time"
+      metricCurrentValue,
       currentWeek,
       dayNumber,
       totalDays,

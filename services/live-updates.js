@@ -114,15 +114,15 @@ async function createUpdate(userId, message, { category = "general", metricKey, 
 
 function sleepMessage(score, totalHours) {
   if (score != null) {
-    if (score >= 85) return `Excellent sleep score of ${Math.round(score)} — you're well recovered`;
-    if (score >= 75) return `Solid sleep score of ${Math.round(score)} — good recovery`;
-    if (score >= 65) return `Sleep score of ${Math.round(score)} — try to wind down earlier tonight`;
-    return `Sleep score of ${Math.round(score)} is low — prioritize recovery today`;
+    if (score >= 85) return `Excellent sleep score of ${Math.round(score)}, you're well recovered`;
+    if (score >= 75) return `Solid sleep score of ${Math.round(score)}, good recovery`;
+    if (score >= 65) return `Sleep score of ${Math.round(score)}, try to wind down earlier tonight`;
+    return `Sleep score of ${Math.round(score)} is low, prioritize recovery today`;
   }
   if (totalHours != null) {
-    if (totalHours < 6) return `Only ${totalHours.toFixed(1)} hrs of sleep — your body needs more rest`;
-    if (totalHours < 7) return `${totalHours.toFixed(1)} hrs of sleep — aim for 7-9 hours tonight`;
-    return `${totalHours.toFixed(1)} hrs of sleep last night — well rested`;
+    if (totalHours < 6) return `Only ${totalHours.toFixed(1)} hrs of sleep, your body needs more rest`;
+    if (totalHours < 7) return `${totalHours.toFixed(1)} hrs of sleep, aim for 7-9 hours tonight`;
+    return `${totalHours.toFixed(1)} hrs of sleep last night, well rested`;
   }
   return "Sleep data synced from your wearable";
 }
@@ -161,10 +161,10 @@ async function generateHeartRateUpdate(userId, metrics) {
 
   if (restingHr != null) {
     let msg;
-    if (restingHr < 55) msg = `Resting heart rate of ${Math.round(restingHr)} bpm — excellent cardiovascular fitness`;
-    else if (restingHr < 70) msg = `Resting heart rate of ${Math.round(restingHr)} bpm — healthy range`;
-    else if (restingHr < 85) msg = `Resting heart rate of ${Math.round(restingHr)} bpm — slightly elevated`;
-    else msg = `Resting heart rate of ${Math.round(restingHr)} bpm is high — focus on stress and recovery`;
+    if (restingHr < 55) msg = `Resting heart rate of ${Math.round(restingHr)} bpm, excellent cardiovascular fitness`;
+    else if (restingHr < 70) msg = `Resting heart rate of ${Math.round(restingHr)} bpm, healthy range`;
+    else if (restingHr < 85) msg = `Resting heart rate of ${Math.round(restingHr)} bpm, slightly elevated`;
+    else msg = `Resting heart rate of ${Math.round(restingHr)} bpm is high, focus on stress and recovery`;
 
     await createUpdate(userId, msg, {
       category: "heart_rate",
@@ -195,13 +195,13 @@ async function generateHeartRateUpdate(userId, metrics) {
 
   if (hrv != null) {
     if (hrv < 30) {
-      await createUpdate(userId, `HRV of ${Math.round(hrv)} ms is low — your body may be stressed`, {
+      await createUpdate(userId, `HRV of ${Math.round(hrv)} ms is low, your body may be stressed`, {
         category: "heart_rate",
         metricKey: "hrv",
         valueNum: hrv,
       });
     } else if (hrv > 70) {
-      await createUpdate(userId, `HRV of ${Math.round(hrv)} ms — strong recovery signal`, {
+      await createUpdate(userId, `HRV of ${Math.round(hrv)} ms, strong recovery signal`, {
         category: "heart_rate",
         metricKey: "hrv",
         valueNum: hrv,
@@ -219,10 +219,10 @@ async function generateActivityUpdate(userId, metrics) {
 
   if (steps != null) {
     let msg;
-    if (steps >= 10000) msg = `${Math.round(steps).toLocaleString()} steps today — you crushed it`;
-    else if (steps >= 7000) msg = `${Math.round(steps).toLocaleString()} steps so far — keep it going`;
-    else if (steps >= 4000) msg = `${Math.round(steps).toLocaleString()} steps — try a quick walk to hit 10k`;
-    else msg = `Only ${Math.round(steps).toLocaleString()} steps today — get moving`;
+    if (steps >= 10000) msg = `${Math.round(steps).toLocaleString()} steps today, you crushed it`;
+    else if (steps >= 7000) msg = `${Math.round(steps).toLocaleString()} steps so far, keep it going`;
+    else if (steps >= 4000) msg = `${Math.round(steps).toLocaleString()} steps, try a quick walk to hit 10k`;
+    else msg = `Only ${Math.round(steps).toLocaleString()} steps today, get moving`;
 
     await createUpdate(userId, msg, {
       category: "activity",
@@ -241,9 +241,9 @@ async function generateActivityUpdate(userId, metrics) {
 
   if (strain != null) {
     let msg;
-    if (strain < 8) msg = `Light strain day (${strain.toFixed(1)}) — good for recovery`;
-    else if (strain < 14) msg = `Moderate strain (${strain.toFixed(1)}) — solid training day`;
-    else msg = `High strain of ${strain.toFixed(1)} — make sure to recover well`;
+    if (strain < 8) msg = `Light strain day (${strain.toFixed(1)}), good for recovery`;
+    else if (strain < 14) msg = `Moderate strain (${strain.toFixed(1)}), solid training day`;
+    else msg = `High strain of ${strain.toFixed(1)}, make sure to recover well`;
 
     await createUpdate(userId, msg, {
       category: "activity",
@@ -257,13 +257,13 @@ async function generateActivityUpdate(userId, metrics) {
 
 async function planGenerated(userId, taskCount, sleepScore) {
   const msg = sleepScore
-    ? `Today's plan is ready — ${taskCount} tasks based on your sleep score of ${Math.round(sleepScore)}`
-    : `Today's plan is ready — ${taskCount} tasks for you`;
+    ? `Today's plan is ready, ${taskCount} tasks based on your sleep score of ${Math.round(sleepScore)}`
+    : `Today's plan is ready, ${taskCount} tasks for you`;
   await createUpdate(userId, msg, { category: "plan", metadata: { taskCount } });
 }
 
 async function tasksCompleted(userId, total) {
-  await createUpdate(userId, `You completed all ${total} tasks today — great work`, {
+  await createUpdate(userId, `You completed all ${total} tasks today, great work`, {
     category: "plan",
     metadata: { total },
   });

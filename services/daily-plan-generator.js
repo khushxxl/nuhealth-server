@@ -318,14 +318,32 @@ async function generateDailyTasks(userId, planId, triggerType) {
     throw new Error("Failed to generate daily tasks");
   }
 
-  // 7. Insert tasks
-  const tasksToInsert = result.tasks.map((task, idx) => ({
-    plan_id: planId,
-    day_number: dayNumber,
-    task_date: today,
-    label: task.label,
-    sort_order: task.sort_order ?? idx,
-  }));
+  // 7. Insert tasks (with category + rationale when the model provided them)
+  const ALLOWED_CATEGORIES = new Set([
+    "fitness",
+    "nutrition",
+    "hydration",
+    "sleep",
+    "recovery",
+  ]);
+  const tasksToInsert = result.tasks.map((task, idx) => {
+    const rawCategory =
+      typeof task.category === "string" ? task.category.toLowerCase().trim() : null;
+    const category = rawCategory && ALLOWED_CATEGORIES.has(rawCategory) ? rawCategory : null;
+    const rationale =
+      typeof task.rationale === "string" && task.rationale.trim().length > 0
+        ? task.rationale.trim()
+        : null;
+    return {
+      plan_id: planId,
+      day_number: dayNumber,
+      task_date: today,
+      label: task.label,
+      sort_order: task.sort_order ?? idx,
+      category,
+      rationale,
+    };
+  });
 
   const { error: insertErr } = await supabase
     .from("action_plan_tasks")
