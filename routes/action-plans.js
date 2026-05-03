@@ -306,6 +306,7 @@ router.get("/action-plans/current", async (req, res) => {
         targetValue: plan.target_value,
         trackedMetricKey: plan.tracked_metric_key,
         targetDirection: plan.target_direction,
+        answers: plan.answers || {},
       },
       progress,
       progressSource, // "metric" | "time"
