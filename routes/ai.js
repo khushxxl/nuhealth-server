@@ -3,6 +3,9 @@ const router = express.Router();
 const { OPENAI_API_KEY } = require("../config/constants");
 const { getServiceClient } = require("../services/supabase");
 const { success, error } = require("../utils/apiResponse");
+const {
+  buildUserHealthSnapshot,
+} = require("../services/user-health-snapshot");
 
 // ─── Prompt Cache (refreshes every 60s) ───────────────────────────────────────
 
@@ -80,16 +83,40 @@ router.post("/ai/chat", async (req, res) => {
       return error(res, "messages array is required", 400);
     }
 
-    const promptId = type === "breakdown" ? "rai-chat-breakdown" : "rai-chat-summary";
+    // Strip any client-supplied system messages — the server is the single
+    // source of truth for the system prompt + user snapshot.
+    const conversation = messages.filter((m) => m.role !== "system");
+    if (!conversation.length) {
+      return error(res, "at least one user message is required", 400);
+    }
+
+    const promptId =
+      type === "breakdown" ? "rai-chat-breakdown" : "rai-chat-summary";
     const prompt = await getPrompt(promptId);
     if (!prompt) {
       return error(res, `Prompt "${promptId}" not found`, 500);
     }
 
-    const result = await callOpenAI([
-      { role: "system", content: prompt.system_prompt },
-      ...messages,
-    ], { model: prompt.model, temperature: prompt.temperature, maxTokens: prompt.max_tokens });
+    // Build the user health snapshot server-side. This grounds the model in
+    // real numbers (body composition, wearable 7d trends, active plan, recent
+    // live updates) instead of letting the client stuff raw JSON blobs in.
+    let snapshot = { text: "USER SNAPSHOT: unavailable", raw: null };
+    try {
+      snapshot = await buildUserHealthSnapshot(req.user.id);
+    } catch (snapErr) {
+      console.warn("[AI/chat] snapshot build failed:", snapErr.message);
+    }
+
+    const systemMessage = {
+      role: "system",
+      content: `${prompt.system_prompt}\n\n${snapshot.text}`,
+    };
+
+    const result = await callOpenAI([systemMessage, ...conversation], {
+      model: prompt.model,
+      temperature: prompt.temperature,
+      maxTokens: prompt.max_tokens,
+    });
 
     return success(res, { response: result });
   } catch (err) {

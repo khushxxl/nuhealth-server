@@ -37,7 +37,7 @@ async function isProUser(userId) {
 
 // ─── Insert helper ────────────────────────────────────────────────────────────
 
-async function createUpdate(userId, message, { category = "general", metricKey, valueNum, metadata } = {}) {
+async function createUpdate(userId, message, { category = "general", metricKey, valueNum, metadata, dedupKey } = {}) {
   const supabase = getServiceClient();
   if (!supabase) return null;
 
@@ -48,6 +48,59 @@ async function createUpdate(userId, message, { category = "general", metricKey, 
     return null;
   }
 
+  // Dedup: when a dedupKey is supplied, replace today's existing update for
+  // that key in place rather than spawning a new card. Stops spam like a
+  // dozen "Only X steps today" rows accumulating throughout a single day.
+  if (dedupKey) {
+    try {
+      const startOfToday = new Date();
+      startOfToday.setHours(0, 0, 0, 0);
+      const { data: existing } = await supabase
+        .from("live_updates")
+        .select("id")
+        .eq("user_id", userId)
+        .gte("created_at", startOfToday.toISOString())
+        .filter("metadata->>dedupKey", "eq", dedupKey)
+        .limit(1)
+        .maybeSingle();
+
+      if (existing) {
+        const mergedMetadata = { ...(metadata || {}), dedupKey };
+        const { data: updated, error: updateErr } = await supabase
+          .from("live_updates")
+          .update({
+            message,
+            value_num: valueNum ?? null,
+            metadata: mergedMetadata,
+            created_at: new Date().toISOString(),
+          })
+          .eq("id", existing.id)
+          .select()
+          .single();
+
+        if (updateErr) {
+          console.warn("[LiveUpdates] Dedup update failed:", updateErr.message);
+        } else {
+          console.log(`♻️  [LiveUpdates] Refreshed (${dedupKey}): ${message}`);
+          try {
+            const { pushToUser } = require("./live-updates-stream");
+            await pushToUser(userId, "live-update", updated);
+          } catch (pushErr) {
+            console.warn("[LiveUpdates] SSE push failed:", pushErr.message);
+          }
+          return updated;
+        }
+      }
+    } catch (dedupErr) {
+      console.warn("[LiveUpdates] Dedup lookup error:", dedupErr.message);
+      // fall through to insert
+    }
+  }
+
+  const insertMetadata = dedupKey
+    ? { ...(metadata || {}), dedupKey }
+    : metadata || null;
+
   try {
     const { data, error } = await supabase
       .from("live_updates")
@@ -57,7 +110,7 @@ async function createUpdate(userId, message, { category = "general", metricKey, 
         category,
         metric_key: metricKey || null,
         value_num: valueNum ?? null,
-        metadata: metadata || null,
+        metadata: insertMetadata,
       }])
       .select()
       .single();
@@ -219,15 +272,26 @@ async function generateActivityUpdate(userId, metrics) {
 
   if (steps != null) {
     let msg;
-    if (steps >= 10000) msg = `${Math.round(steps).toLocaleString()} steps today, you crushed it`;
-    else if (steps >= 7000) msg = `${Math.round(steps).toLocaleString()} steps so far, keep it going`;
-    else if (steps >= 4000) msg = `${Math.round(steps).toLocaleString()} steps, try a quick walk to hit 10k`;
-    else msg = `Only ${Math.round(steps).toLocaleString()} steps today, get moving`;
+    let tier;
+    if (steps >= 10000) {
+      msg = `${Math.round(steps).toLocaleString()} steps today, you crushed it`;
+      tier = "crushed";
+    } else if (steps >= 7000) {
+      msg = `${Math.round(steps).toLocaleString()} steps so far, keep it going`;
+      tier = "on-track";
+    } else if (steps >= 4000) {
+      msg = `${Math.round(steps).toLocaleString()} steps, try a quick walk to hit 10k`;
+      tier = "mid";
+    } else {
+      msg = `Only ${Math.round(steps).toLocaleString()} steps today, get moving`;
+      tier = "low";
+    }
 
     await createUpdate(userId, msg, {
       category: "activity",
       metricKey: "steps",
       valueNum: steps,
+      dedupKey: `steps:${tier}`,
     });
   }
 
@@ -236,19 +300,29 @@ async function generateActivityUpdate(userId, metrics) {
       category: "activity",
       metricKey: "calories_active",
       valueNum: calories,
+      dedupKey: "calories_active:daily",
     });
   }
 
   if (strain != null) {
     let msg;
-    if (strain < 8) msg = `Light strain day (${strain.toFixed(1)}), good for recovery`;
-    else if (strain < 14) msg = `Moderate strain (${strain.toFixed(1)}), solid training day`;
-    else msg = `High strain of ${strain.toFixed(1)}, make sure to recover well`;
+    let tier;
+    if (strain < 8) {
+      msg = `Light strain day (${strain.toFixed(1)}), good for recovery`;
+      tier = "light";
+    } else if (strain < 14) {
+      msg = `Moderate strain (${strain.toFixed(1)}), solid training day`;
+      tier = "moderate";
+    } else {
+      msg = `High strain of ${strain.toFixed(1)}, make sure to recover well`;
+      tier = "high";
+    }
 
     await createUpdate(userId, msg, {
       category: "activity",
       metricKey: "strain_score",
       valueNum: strain,
+      dedupKey: `strain_score:${tier}`,
     });
   }
 }
