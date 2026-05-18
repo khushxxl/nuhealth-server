@@ -28,6 +28,9 @@ const actionPlanRoutes = require("./routes/action-plans");
 const biyoSupplementsRoutes = require("./routes/biyo-supplements");
 const liveUpdatesRoutes = require("./routes/live-updates");
 const { initPlanQueue } = require("./services/plan-queue");
+const {
+  initSupplementsReminders,
+} = require("./services/supplements-reminders");
 const { getSupabaseClient } = require("./services/supabase");
 const { OPENAI_API_KEY } = require("./config/constants");
 
@@ -470,6 +473,7 @@ app.listen(PORT, "0.0.0.0", () => {
   // Initialize BullMQ plan queue after server is ready
   if (process.env.REDIS_URL) {
     initPlanQueue();
+    initSupplementsReminders();
   } else {
     console.log("⚠️  REDIS_URL not set — daily plan scheduler disabled");
   }

@@ -57,7 +57,9 @@ router.get("/biyo-supplements/status", async (req, res) => {
 
     const { data: tracking } = await supabase
       .from("biyo_supplements_tracking")
-      .select("active, started_at, current_package_started_at")
+      .select(
+        "active, started_at, current_package_started_at, reorder_reminders_enabled",
+      )
       .eq("user_id", userId)
       .maybeSingle();
 
@@ -131,6 +133,9 @@ router.get("/biyo-supplements/status", async (req, res) => {
         needsReorder,
         empty: packageEmpty,
         reorderUrl: REORDER_URL,
+        // Default-on at the DB layer; preserved as a boolean here so the
+        // client can render the switch in the right position immediately.
+        remindersEnabled: tracking.reorder_reminders_enabled !== false,
       },
     });
   } catch (err) {
@@ -158,6 +163,10 @@ router.post("/biyo-supplements/start", async (req, res) => {
           active: true,
           started_at: nowIso,
           current_package_started_at: nowIso,
+          // Reset reminder flags on every fresh start so reorder pushes fire
+          // again as this new bottle approaches the 7- and 3-dose thresholds.
+          reorder_reminder_7_sent: false,
+          reorder_reminder_3_sent: false,
           updated_at: nowIso,
         },
         { onConflict: "user_id" },
@@ -231,6 +240,46 @@ router.delete("/biyo-supplements/log", async (req, res) => {
 });
 
 /**
+ * PATCH /api/biyo-supplements/preferences
+ * Body: { remindersEnabled?: boolean }
+ * Persists user-controlled toggles on the tracking row. Right now only the
+ * reorder-reminder switch lives here; future per-user prefs can extend this.
+ */
+router.patch("/biyo-supplements/preferences", async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const supabase = getServiceClient();
+    if (!supabase) return error(res, "Database not configured", 500);
+
+    const { remindersEnabled } = req.body || {};
+    if (typeof remindersEnabled !== "boolean") {
+      return error(res, "remindersEnabled (boolean) is required", 400);
+    }
+
+    const { error: updateErr } = await supabase
+      .from("biyo_supplements_tracking")
+      .update({
+        reorder_reminders_enabled: remindersEnabled,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("user_id", userId);
+
+    if (updateErr) {
+      console.error(
+        "[BiyoSupplements] preferences update error:",
+        updateErr.message,
+      );
+      return error(res, "Failed to update preferences", 500);
+    }
+
+    return success(res, { remindersEnabled });
+  } catch (err) {
+    console.error("[BiyoSupplements] preferences error:", err.message);
+    return error(res, "Failed to update preferences", 500);
+  }
+});
+
+/**
  * POST /api/biyo-supplements/new-package
  * Mark the start of a fresh 30-day package so the doses-remaining counter
  * resets to PACKAGE_SIZE. Called when the user confirms a new bottle has
@@ -247,6 +296,9 @@ router.post("/biyo-supplements/new-package", async (req, res) => {
       .from("biyo_supplements_tracking")
       .update({
         current_package_started_at: nowIso,
+        // Reset reminders so the user gets fresh warnings on the new bottle.
+        reorder_reminder_7_sent: false,
+        reorder_reminder_3_sent: false,
         updated_at: nowIso,
       })
       .eq("user_id", userId);
