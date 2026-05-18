@@ -169,20 +169,6 @@ async function getRecentLiveUpdates(supabase, userId, days = 5) {
   return data || [];
 }
 
-async function getLatestCheckin(supabase, userId) {
-  const { data } = await supabase
-    .from("personalization")
-    .select("checkin_results")
-    .eq("userid", userId)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  const arr = data?.checkin_results;
-  if (!Array.isArray(arr) || arr.length === 0) return null;
-  return arr[arr.length - 1];
-}
-
 async function getProfile(supabase, userId) {
   const { data } = await supabase
     .from("users")
@@ -295,23 +281,6 @@ function formatLiveUpdates(updates) {
   return ["RECENT SIGNALS (5d):", ...lines].join("\n");
 }
 
-function formatCheckin(c) {
-  if (!c) return "LAST CHECK-IN: none";
-  const sleepQ = c.sleep_metrics?.sleep_quality;
-  const stress = c.performance_metrics?.stress_level;
-  const energy = c.performance_metrics?.energy_level;
-  const mood = c.mental_state_metrics?.mood_level;
-  const symptoms = c.essential_tasks;
-  const bits = [];
-  if (sleepQ != null) bits.push(`sleep quality ${sleepQ}/10`);
-  if (energy != null) bits.push(`energy ${energy}/10`);
-  if (stress) bits.push(`stress ${stress}`);
-  if (mood) bits.push(`mood ${mood}`);
-  if (Array.isArray(symptoms) && symptoms.length)
-    bits.push(`reported: ${symptoms.join(", ")}`);
-  return `LAST CHECK-IN: ${bits.length ? bits.join(", ") : "no recent check-in"}`;
-}
-
 function formatOnboarding(answers) {
   // Pick a few high-signal questions and surface as plain bullets so the model
   // doesn't waste tokens parsing a JSON blob.
@@ -350,22 +319,13 @@ async function buildUserHealthSnapshot(userId) {
     return { text: "USER SNAPSHOT: data unavailable", raw: null };
   }
 
-  const [
-    profile,
-    body,
-    wearable,
-    goal,
-    plan,
-    updates,
-    checkin,
-  ] = await Promise.all([
+  const [profile, body, wearable, goal, plan, updates] = await Promise.all([
     getProfile(supabase, userId).catch(() => null),
     getBodyComposition(supabase, userId).catch(() => null),
     getWearable7d(userId).catch(() => ({})),
     getActiveGoal(supabase, userId).catch(() => null),
     getActivePlan(supabase, userId).catch(() => null),
     getRecentLiveUpdates(supabase, userId).catch(() => []),
-    getLatestCheckin(supabase, userId).catch(() => null),
   ]);
 
   const sections = [
@@ -376,14 +336,13 @@ async function buildUserHealthSnapshot(userId) {
     formatGoal(goal),
     formatPlan(plan),
     formatLiveUpdates(updates),
-    formatCheckin(checkin),
     formatOnboarding(profile?.onboarding_answers),
     "=== END SNAPSHOT ===",
   ];
 
   return {
     text: sections.join("\n\n"),
-    raw: { profile, body, wearable, goal, plan, updates, checkin },
+    raw: { profile, body, wearable, goal, plan, updates },
   };
 }
 

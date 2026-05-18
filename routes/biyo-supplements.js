@@ -3,6 +3,13 @@ const router = express.Router();
 const { getServiceClient } = require("../services/supabase");
 const { success, error } = require("../utils/apiResponse");
 
+// Each Biyo supplement bottle ships with this many doses (one per day).
+const PACKAGE_SIZE = 30;
+// When the user has this many doses (or fewer) left in their bottle, surface
+// a reorder banner in the app so they don't run out before a new one arrives.
+const REORDER_THRESHOLD = 7;
+const REORDER_URL = "https://biyo.com/pages/longevity";
+
 function todayISO() {
   return new Date().toISOString().split("T")[0];
 }
@@ -50,7 +57,7 @@ router.get("/biyo-supplements/status", async (req, res) => {
 
     const { data: tracking } = await supabase
       .from("biyo_supplements_tracking")
-      .select("active, started_at")
+      .select("active, started_at, current_package_started_at")
       .eq("user_id", userId)
       .maybeSingle();
 
@@ -70,6 +77,26 @@ router.get("/biyo-supplements/status", async (req, res) => {
 
     const takenDates = (rows || []).map((r) => r.taken_date);
     const streakDays = computeStreak(takenDates);
+
+    // ── Package tracking ─────────────────────────────────────────────────
+    // A package = 30 doses. Count how many doses the user has logged since
+    // the current package was opened. If they pass the threshold, the
+    // client will show a reorder banner; if they hit zero, it switches to a
+    // "start your next package" CTA that pings POST /new-package below.
+    const packageStartIso =
+      tracking.current_package_started_at || tracking.started_at;
+    const packageStartDate = packageStartIso
+      ? packageStartIso.split("T")[0]
+      : null;
+    let dosesTakenInPackage = 0;
+    if (packageStartDate) {
+      dosesTakenInPackage = takenDates.filter(
+        (d) => d >= packageStartDate,
+      ).length;
+    }
+    const dosesRemaining = Math.max(0, PACKAGE_SIZE - dosesTakenInPackage);
+    const needsReorder = dosesRemaining <= REORDER_THRESHOLD;
+    const packageEmpty = dosesRemaining === 0;
 
     // Build the current ISO-week (Mon..Sun) view for the streak panel.
     const today = new Date();
@@ -95,6 +122,16 @@ router.get("/biyo-supplements/status", async (req, res) => {
       totalTaken,
       weekDays,
       takenDates,
+      package: {
+        size: PACKAGE_SIZE,
+        startedAt: packageStartIso,
+        dosesTaken: dosesTakenInPackage,
+        dosesRemaining,
+        reorderThreshold: REORDER_THRESHOLD,
+        needsReorder,
+        empty: packageEmpty,
+        reorderUrl: REORDER_URL,
+      },
     });
   } catch (err) {
     console.error("[BiyoSupplements] status error:", err.message);
@@ -112,14 +149,16 @@ router.post("/biyo-supplements/start", async (req, res) => {
     const supabase = getServiceClient();
     if (!supabase) return error(res, "Database not configured", 500);
 
+    const nowIso = new Date().toISOString();
     const { error: upsertErr } = await supabase
       .from("biyo_supplements_tracking")
       .upsert(
         {
           user_id: userId,
           active: true,
-          started_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
+          started_at: nowIso,
+          current_package_started_at: nowIso,
+          updated_at: nowIso,
         },
         { onConflict: "user_id" },
       );
@@ -188,6 +227,39 @@ router.delete("/biyo-supplements/log", async (req, res) => {
   } catch (err) {
     console.error("[BiyoSupplements] unlog error:", err.message);
     return error(res, "Failed to remove intake", 500);
+  }
+});
+
+/**
+ * POST /api/biyo-supplements/new-package
+ * Mark the start of a fresh 30-day package so the doses-remaining counter
+ * resets to PACKAGE_SIZE. Called when the user confirms a new bottle has
+ * arrived ("I've started a new package" in the app).
+ */
+router.post("/biyo-supplements/new-package", async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const supabase = getServiceClient();
+    if (!supabase) return error(res, "Database not configured", 500);
+
+    const nowIso = new Date().toISOString();
+    const { error: updateErr } = await supabase
+      .from("biyo_supplements_tracking")
+      .update({
+        current_package_started_at: nowIso,
+        updated_at: nowIso,
+      })
+      .eq("user_id", userId);
+
+    if (updateErr) {
+      console.error("[BiyoSupplements] new-package error:", updateErr.message);
+      return error(res, "Failed to start new package", 500);
+    }
+
+    return success(res, { startedAt: nowIso });
+  } catch (err) {
+    console.error("[BiyoSupplements] new-package error:", err.message);
+    return error(res, "Failed to start new package", 500);
   }
 });
 
