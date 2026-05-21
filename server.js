@@ -31,6 +31,7 @@ const { initPlanQueue } = require("./services/plan-queue");
 const {
   initSupplementsReminders,
 } = require("./services/supplements-reminders");
+const { initPaywallReminders } = require("./services/paywall-reminders");
 const { getSupabaseClient } = require("./services/supabase");
 const { OPENAI_API_KEY } = require("./config/constants");
 
@@ -474,6 +475,7 @@ app.listen(PORT, "0.0.0.0", () => {
   if (process.env.REDIS_URL) {
     initPlanQueue();
     initSupplementsReminders();
+    initPaywallReminders();
   } else {
     console.log("⚠️  REDIS_URL not set — daily plan scheduler disabled");
   }

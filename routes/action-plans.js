@@ -9,6 +9,7 @@ const {
   queueImmediateGeneration,
 } = require("../services/plan-queue");
 const { resolveTargetSpec } = require("../utils/planTargetParser");
+const { isProUser } = require("../services/live-updates");
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -83,6 +84,22 @@ router.post("/action-plans/generate", async (req, res) => {
 
     if (!goal || !timelineWeeks || !intensity) {
       return error(res, "goal, timelineWeeks, and intensity are required", 400);
+    }
+
+    // Action Plans are a Pro-only feature: each generation calls OpenAI, so
+    // creating new plans is gated. Pre-existing active plans (and their daily
+    // task regeneration) keep working — only NEW plan creation is blocked
+    // here. Client should open the paywall on this 402 response.
+    const pro = await isProUser(userId);
+    if (!pro) {
+      console.log(
+        `🔒 [ActionPlan] Generate blocked for non-pro user ${userId}`,
+      );
+      return error(
+        res,
+        "Action Plans are a Biyo+ feature. Subscribe to create a plan.",
+        402,
+      );
     }
 
     const supabase = getServiceClient();
