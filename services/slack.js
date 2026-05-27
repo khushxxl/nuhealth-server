@@ -38,6 +38,8 @@ const EVENT_CATEGORY = {
   ble_pairing_failed: "reports",
   wifi_setup_failed: "reports",
   scale_sync_failed: "reports",
+  server_heartbeat: "reports",
+  server_unhealthy: "reports",
 };
 
 const ICONS = {
@@ -50,6 +52,8 @@ const ICONS = {
   subscription_expired: "⌛",
   subscription_billing_issue: "🔴",
   subscription_paused: "⏸️",
+  server_heartbeat: "💓",
+  server_unhealthy: "🔴",
   generic: "ℹ️",
 };
 

@@ -33,6 +33,8 @@ const {
   initSupplementsReminders,
 } = require("./services/supplements-reminders");
 const { initPaywallReminders } = require("./services/paywall-reminders");
+const { initSlackHeartbeat } = require("./services/slack-heartbeat");
+const slackCommandsRoutes = require("./routes/slack-commands");
 const { shutdown: posthogShutdown } = require("./services/posthog-server");
 const { getSupabaseClient } = require("./services/supabase");
 const { OPENAI_API_KEY } = require("./config/constants");
@@ -336,6 +338,7 @@ app.post("/lefu/wifi/torre/config", (req, res) => {
 
 // --- Webhook routes (no auth — server-to-server) ---
 app.use("/webhooks", webhookRoutes);
+app.use("/slack", slackCommandsRoutes);
 
 // --- Frontend API routes (JWT-authenticated) ---
 app.use("/api", authMiddleware);
@@ -479,6 +482,7 @@ app.listen(PORT, "0.0.0.0", () => {
     initPlanQueue();
     initSupplementsReminders();
     initPaywallReminders();
+    initSlackHeartbeat();
   } else {
     console.log("⚠️  REDIS_URL not set — daily plan scheduler disabled");
   }
