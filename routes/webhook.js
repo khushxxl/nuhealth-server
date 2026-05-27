@@ -1,6 +1,18 @@
 const express = require("express");
 const router = express.Router();
 const { getServiceClient } = require("../services/supabase");
+const { notify: slackNotify } = require("../services/slack");
+
+// Maps Superwall event types → (slack type, human title). Only the lifecycle
+// events worth waking up for. Renewal we skip — it'd be hundreds per day.
+const SLACK_EVENTS = {
+  initial_purchase: { type: "subscription_new", title: "New subscription" },
+  cancellation: { type: "subscription_cancelled", title: "Subscription cancelled" },
+  expiration: { type: "subscription_expired", title: "Subscription expired" },
+  billing_issue: { type: "subscription_billing_issue", title: "Subscription billing issue" },
+  subscription_paused: { type: "subscription_paused", title: "Subscription paused" },
+  uncancellation: { type: "subscription_renewed", title: "Subscription reactivated" },
+};
 
 /**
  * POST /webhooks/superwall
@@ -232,6 +244,48 @@ router.post("/superwall", async (req, res) => {
           `✅ [Webhook] Updated user ${appUserId} subscription:`,
           subscriptionUpdate,
         );
+
+        // Fire-and-forget Slack ping for high-signal lifecycle events.
+        const slackMeta = SLACK_EVENTS[eventType];
+        if (slackMeta) {
+          let email = null;
+          try {
+            const { data: u } = await supabase
+              .from("users")
+              .select("email")
+              .eq("id", appUserId)
+              .maybeSingle();
+            email = u?.email || null;
+          } catch {
+            // best-effort
+          }
+
+          const priceStr =
+            typeof eventData.price === "number"
+              ? `${eventData.currencyCode || "USD"} ${eventData.price}`
+              : null;
+
+          slackNotify({
+            type: slackMeta.type,
+            title: slackMeta.title,
+            reason:
+              eventData.cancelReason ||
+              eventData.expirationReason ||
+              undefined,
+            userId: appUserId,
+            email,
+            details: {
+              Product: eventData.productId,
+              Store: eventData.store,
+              Period: eventData.periodType,
+              Price: priceStr,
+              Environment: eventData.environment,
+              Expires: eventData.expirationAt
+                ? new Date(eventData.expirationAt).toISOString()
+                : null,
+            },
+          });
+        }
       }
     }
 

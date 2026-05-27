@@ -12,6 +12,7 @@
 
 const { OPENAI_API_KEY } = require("../config/constants");
 const { getServiceClient } = require("../services/supabase");
+const { isStatusPro } = require("../services/live-updates");
 
 // Metrics we auto-generate RAI for (subset of all body_param_keys; the high-signal ones)
 const AUTO_RAI_METRICS = [
@@ -29,7 +30,6 @@ const AUTO_RAI_METRICS = [
   "ppBodyScore",
 ];
 
-const PRO_STATUSES = new Set(["ACTIVE", "active", "trialing"]);
 
 // ─── Prompt cache (60s, shared pattern) ───────────────────────────────────────
 
@@ -95,10 +95,13 @@ async function generateAutoRAIForRecord({
   const supabase = getServiceClient();
   if (!supabase) return { success: false, reason: "Supabase not configured" };
 
-  // 1. Pro check
+  // 1. Pro check — expiration-aware so a lapsed-but-not-yet-webhooked
+  // subscription correctly gates out of the OpenAI-spending path.
   const { data: user } = await supabase
     .from("users")
-    .select("name, email, subscription_status, onboarding_answers")
+    .select(
+      "name, email, subscription_status, subscription_expires_at, onboarding_answers",
+    )
     .eq("id", userId)
     .maybeSingle();
 
@@ -107,7 +110,10 @@ async function generateAutoRAIForRecord({
     return { success: false, reason: "User not found" };
   }
 
-  const isPro = PRO_STATUSES.has(String(user.subscription_status || ""));
+  const isPro = isStatusPro(
+    user.subscription_status,
+    user.subscription_expires_at,
+  );
   if (!isPro) {
     console.log(`[AutoRAI] User ${userId} is not Pro, skipping auto RAI generation`);
     return { success: false, reason: "Not pro" };

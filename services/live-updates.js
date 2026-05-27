@@ -4,12 +4,29 @@ const healthMetrics = require("./health-metrics");
 // ─── Pro subscription check (cached briefly) ─────────────────────────────────
 
 const PRO_STATUSES = new Set(["active", "trialing"]);
-const proCache = new Map(); // userId -> { isPro, expiresAt }
+const proCache = new Map(); // userId -> { isPro, cacheExpiresAt }
 const PRO_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+/**
+ * Pure check: combines status + expiry. Returns true only when the user has
+ * a Pro-tier status string AND (no expiration set OR expiration is in the
+ * future). Catches the case where a webhook for `expiration` was lost or
+ * delayed — Apple/Google receipt server stays the source of truth.
+ *
+ * Exported so callers that already SELECTed both columns (cron sweeps,
+ * etc.) can avoid an extra round-trip to isProUser().
+ */
+function isStatusPro(status, expiresAtIso) {
+  if (!PRO_STATUSES.has(String(status || "").toLowerCase())) return false;
+  if (!expiresAtIso) return true; // non-renewing purchase or missing expiry
+  const expMs = new Date(expiresAtIso).getTime();
+  if (!Number.isFinite(expMs)) return true; // unparseable — trust the status
+  return expMs > Date.now();
+}
 
 async function isProUser(userId) {
   const cached = proCache.get(userId);
-  if (cached && cached.expiresAt > Date.now()) return cached.isPro;
+  if (cached && cached.cacheExpiresAt > Date.now()) return cached.isPro;
 
   const supabase = getServiceClient();
   if (!supabase) return false;
@@ -17,17 +34,35 @@ async function isProUser(userId) {
   try {
     const { data, error } = await supabase
       .from("users")
-      .select("subscription_status")
+      .select("subscription_status, subscription_expires_at")
       .eq("id", userId)
       .maybeSingle();
 
     if (error || !data) {
-      proCache.set(userId, { isPro: false, expiresAt: Date.now() + PRO_CACHE_TTL });
+      proCache.set(userId, {
+        isPro: false,
+        cacheExpiresAt: Date.now() + PRO_CACHE_TTL,
+      });
       return false;
     }
 
-    const isPro = PRO_STATUSES.has(String(data.subscription_status || "").toLowerCase());
-    proCache.set(userId, { isPro, expiresAt: Date.now() + PRO_CACHE_TTL });
+    const isPro = isStatusPro(
+      data.subscription_status,
+      data.subscription_expires_at,
+    );
+
+    // Cap the cache so it never outlives the subscription itself. If the
+    // user expires in 90s, cache for 90s — not the full 5 min — so they
+    // lose Pro the moment it actually lapses.
+    let cacheExpiresAt = Date.now() + PRO_CACHE_TTL;
+    if (isPro && data.subscription_expires_at) {
+      const expMs = new Date(data.subscription_expires_at).getTime();
+      if (Number.isFinite(expMs) && expMs < cacheExpiresAt) {
+        cacheExpiresAt = expMs;
+      }
+    }
+
+    proCache.set(userId, { isPro, cacheExpiresAt });
     return isPro;
   } catch (err) {
     console.warn("[LiveUpdates] Pro check failed:", err.message);
@@ -371,4 +406,5 @@ module.exports = {
   planGenerated,
   tasksCompleted,
   isProUser,
+  isStatusPro,
 };

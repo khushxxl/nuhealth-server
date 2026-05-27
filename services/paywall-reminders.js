@@ -2,6 +2,7 @@ const { Queue, Worker } = require("bullmq");
 const { getServiceClient } = require("./supabase");
 const { sendPushNotification } = require("./notification");
 const { capture: posthogCapture } = require("./posthog-server");
+const { isStatusPro } = require("./live-updates");
 
 const REDIS_URL = process.env.REDIS_URL || "redis://localhost:6379";
 const connection = { url: REDIS_URL, maxRetriesPerRequest: null };
@@ -41,8 +42,6 @@ const PAYWALL_MESSAGES = [
   },
 ];
 
-const PRO_STATUSES = new Set(["active", "trialing"]);
-
 const reminderQueue = new Queue("paywall-reminders", { connection });
 const REPEATABLE_JOB_ID = "paywall-reminders-daily";
 // 10:00 UTC every day — overlaps morning windows across most timezones without
@@ -57,6 +56,20 @@ function daysSince(iso) {
   return ms / (1000 * 60 * 60 * 24);
 }
 
+// Expo returns `DeviceNotRegistered` (and similar) when a push token belongs
+// to a removed app install or a logged-out user. We clear those tokens so
+// the cron stops trying.
+function isDeadTokenError(err) {
+  if (!err) return false;
+  const s = String(err).toLowerCase();
+  return (
+    s.includes("devicenotregistered") ||
+    s.includes("device not registered") ||
+    s.includes("invalidcredentials") ||
+    s.includes("not a registered push notification")
+  );
+}
+
 /**
  * Sweep every non-Pro user and push the next teaser message if they're due.
  * Idempotent across reruns: `last_paywall_reminder_at` is updated only after
@@ -69,13 +82,13 @@ async function processPaywallReminders() {
     return { processed: 0, notified: 0 };
   }
 
-  // We only want users who can actually receive a push (have a token) and who
-  // haven't opted out of live update notifications. The opt-out flag is the
-  // closest existing user-controlled toggle for marketing-style pushes.
+  // We only need users who can actually receive a push. These are general
+  // marketing reminders, gated only by the OS-level notification permission
+  // (i.e. they have a push token) — not by the live-updates anomaly toggle.
   const { data: users, error: usersErr } = await supabase
     .from("users")
     .select(
-      "id, notification_id, subscription_status, live_updates_notifications, last_paywall_reminder_at, paywall_reminder_index",
+      "id, notification_id, subscription_status, subscription_expires_at, last_paywall_reminder_at, paywall_reminder_index",
     )
     .not("notification_id", "is", null);
 
@@ -88,24 +101,63 @@ async function processPaywallReminders() {
   }
 
   let notified = 0;
+  const cutoffIso = new Date(
+    Date.now() - REMINDER_INTERVAL_DAYS * 24 * 60 * 60 * 1000,
+  ).toISOString();
+
   for (const u of users || []) {
-    const isPro = PRO_STATUSES.has(
-      String(u.subscription_status || "").toLowerCase(),
+    // ── Eligibility gates (cheap pre-filter) ──────────────────────────
+    // isStatusPro also rejects users whose status says active/trialing
+    // but whose subscription_expires_at is already in the past — protects
+    // against missed `expiration` webhooks (Apple/Google can delay them
+    // by hours). Without this, an expired user would never get the nudge.
+    const isPro = isStatusPro(
+      u.subscription_status,
+      u.subscription_expires_at,
     );
     if (isPro) continue;
-
-    // Re-use the existing notifications opt-in. If users churn on this, we
-    // can split it into a dedicated marketing-opt-in column later.
-    if (u.live_updates_notifications === false) continue;
-
+    if (!u.notification_id) continue;
     const elapsed = daysSince(u.last_paywall_reminder_at);
     if (elapsed < REMINDER_INTERVAL_DAYS) continue;
 
     const idx =
-      ((u.paywall_reminder_index || 0) % PAYWALL_MESSAGES.length + PAYWALL_MESSAGES.length) %
+      (((u.paywall_reminder_index || 0) % PAYWALL_MESSAGES.length) +
+        PAYWALL_MESSAGES.length) %
       PAYWALL_MESSAGES.length;
     const msg = PAYWALL_MESSAGES[idx];
 
+    // ── Atomic claim ──────────────────────────────────────────────────
+    // Update the row only if last_paywall_reminder_at is still old enough
+    // (or null). If two processes race, only one wins this update — the
+    // other's update returns zero rows and we skip the send. Stops any
+    // duplicate notifications even under unexpected concurrency.
+    const claimAt = new Date().toISOString();
+    const orFilter = `last_paywall_reminder_at.is.null,last_paywall_reminder_at.lt.${cutoffIso}`;
+    const { data: claimed, error: claimErr } = await supabase
+      .from("users")
+      .update({
+        last_paywall_reminder_at: claimAt,
+        paywall_reminder_index: idx + 1,
+      })
+      .eq("id", u.id)
+      .or(orFilter)
+      .select("id")
+      .maybeSingle();
+
+    if (claimErr) {
+      console.warn(
+        "[PaywallReminders] Claim failed for user",
+        u.id,
+        claimErr.message,
+      );
+      continue;
+    }
+    if (!claimed) {
+      // Another process already sent to this user since we read the row.
+      continue;
+    }
+
+    // ── Push send ─────────────────────────────────────────────────────
     let pushOk = false;
     try {
       const result = await sendPushNotification(
@@ -117,6 +169,16 @@ async function processPaywallReminders() {
       if (result.success) {
         notified += 1;
         pushOk = true;
+      } else if (isDeadTokenError(result.error)) {
+        // Token belongs to an uninstalled / re-installed app. Clear it so
+        // we stop trying — saves API calls and prevents perpetual noise.
+        console.log(
+          `[PaywallReminders] Clearing dead push token for user ${u.id}`,
+        );
+        await supabase
+          .from("users")
+          .update({ notification_id: null })
+          .eq("id", u.id);
       }
     } catch (err) {
       console.warn(
@@ -126,9 +188,6 @@ async function processPaywallReminders() {
       );
     }
 
-    // Funnel entry event. Pairs with paywall_reminder_opened (client tap)
-    // and purchase_success / purchase_cancelled (client paywall result) so
-    // we can compute CTR + conversion for each rotating variant.
     if (pushOk) {
       posthogCapture(u.id, "paywall_reminder_sent", {
         placement: "paywall_reminder",
@@ -137,15 +196,9 @@ async function processPaywallReminders() {
       });
     }
 
-    // Bump regardless of delivery success so we don't spam the same user
-    // every day with the same variant on transient failures.
-    await supabase
-      .from("users")
-      .update({
-        last_paywall_reminder_at: new Date().toISOString(),
-        paywall_reminder_index: idx + 1,
-      })
-      .eq("id", u.id);
+    // No further update needed — the atomic claim above already set both
+    // last_paywall_reminder_at and paywall_reminder_index in a single
+    // transaction, which is what guarantees we can't double-send.
   }
 
   return { processed: (users || []).length, notified };

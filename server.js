@@ -27,11 +27,13 @@ const aiRoutes = require("./routes/ai");
 const actionPlanRoutes = require("./routes/action-plans");
 const biyoSupplementsRoutes = require("./routes/biyo-supplements");
 const liveUpdatesRoutes = require("./routes/live-updates");
+const eventsRoutes = require("./routes/events");
 const { initPlanQueue } = require("./services/plan-queue");
 const {
   initSupplementsReminders,
 } = require("./services/supplements-reminders");
 const { initPaywallReminders } = require("./services/paywall-reminders");
+const { shutdown: posthogShutdown } = require("./services/posthog-server");
 const { getSupabaseClient } = require("./services/supabase");
 const { OPENAI_API_KEY } = require("./config/constants");
 
@@ -350,6 +352,7 @@ app.use("/api", aiRoutes);
 app.use("/api", actionPlanRoutes);
 app.use("/api", biyoSupplementsRoutes);
 app.use("/api", liveUpdatesRoutes);
+app.use("/api", eventsRoutes);
 
 // Wi-Fi Provisioning: Device registration endpoint during Wi-Fi setup
 // This endpoint is called during the scale's Wi-Fi provisioning step
@@ -479,6 +482,20 @@ app.listen(PORT, "0.0.0.0", () => {
   } else {
     console.log("⚠️  REDIS_URL not set — daily plan scheduler disabled");
   }
+
+  // Flush in-flight PostHog events before the process exits so we don't
+  // lose paywall_reminder_sent / supplement events on graceful shutdown.
+  const handleShutdown = async (signal) => {
+    console.log(`\n📤 Received ${signal}, flushing analytics…`);
+    try {
+      await posthogShutdown();
+    } catch (err) {
+      console.warn("[Shutdown] PostHog flush failed:", err.message);
+    }
+    process.exit(0);
+  };
+  process.once("SIGTERM", () => handleShutdown("SIGTERM"));
+  process.once("SIGINT", () => handleShutdown("SIGINT"));
 
   console.log(`\n🚀 Lefu WiFi Torre Scale Server`);
   console.log(`   Listening on: ${serverUrl}`);

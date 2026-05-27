@@ -415,6 +415,188 @@ router.put("/users/me/subscription", async (req, res) => {
   }
 });
 
+/**
+ * POST /api/users/me/reconcile-subscription
+ *
+ * Drains the pending_subscription_events table for the authenticated user.
+ *
+ * Background: webhooks can arrive before a user has been identified with
+ * Superwall (cold start, race with auth, or signup-after-purchase flow).
+ * Those events get parked in `pending_subscription_events` keyed by the
+ * Superwall alias / originalAppUserId. As soon as the client identifies the
+ * user, it calls this endpoint so the server can replay those pending
+ * events onto the user row and clear them out. Without this, paid users
+ * stay "free" indefinitely.
+ *
+ * Idempotent — safe to call on every app foreground.
+ */
+router.post("/users/me/reconcile-subscription", async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const supabase = getServiceClient();
+    if (!supabase) return error(res, "Database not configured", 500);
+
+    // Match pending events that were keyed against this Supabase user id
+    // (the alias the client sets via Superwall.identify). Order oldest →
+    // newest so terminal events (expiration, cancellation) win over earlier
+    // ones if we have both in the queue.
+    const { data: pending, error: fetchErr } = await supabase
+      .from("pending_subscription_events")
+      .select("*")
+      .or(`alias_id.eq.${userId},original_app_user_id.eq.${userId}`)
+      .order("created_at", { ascending: true });
+
+    if (fetchErr) {
+      console.error(
+        "[Reconcile] Failed to fetch pending events:",
+        fetchErr.message,
+      );
+      return error(res, "Failed to fetch pending subscription events", 500);
+    }
+
+    if (!pending || pending.length === 0) {
+      return success(res, { reconciled: 0 });
+    }
+
+    // Reduce the pending event stream into a single user-row update.
+    // Same per-event mapping as the webhook handler — kept in sync below.
+    let userUpdate = {};
+    for (const ev of pending) {
+      const data = ev.raw_payload?.data || {};
+      switch (ev.event_type) {
+        case "initial_purchase":
+          userUpdate = {
+            ...userUpdate,
+            subscription_status:
+              ev.period_type === "TRIAL" ? "trialing" : "active",
+            subscription_product_id: ev.product_id,
+            subscription_expires_at: ev.expires_at || null,
+            subscription_started_at:
+              ev.purchased_at || new Date().toISOString(),
+            subscription_store: ev.store,
+            subscription_period_type: ev.period_type,
+          };
+          break;
+        case "renewal":
+          userUpdate = {
+            ...userUpdate,
+            subscription_status: "active",
+            subscription_product_id: ev.product_id,
+            subscription_expires_at: ev.expires_at || null,
+            subscription_period_type: data.isTrialConversion
+              ? "NORMAL"
+              : ev.period_type,
+          };
+          break;
+        case "cancellation":
+          userUpdate = {
+            ...userUpdate,
+            subscription_status: "cancelled",
+            subscription_cancel_reason: ev.cancel_reason,
+          };
+          break;
+        case "uncancellation":
+          userUpdate = {
+            ...userUpdate,
+            subscription_status: "active",
+            subscription_cancel_reason: null,
+          };
+          break;
+        case "expiration":
+          userUpdate = {
+            ...userUpdate,
+            subscription_status: "expired",
+            subscription_cancel_reason: ev.cancel_reason,
+          };
+          break;
+        case "billing_issue":
+          userUpdate = { ...userUpdate, subscription_status: "billing_issue" };
+          break;
+        case "subscription_paused":
+          userUpdate = { ...userUpdate, subscription_status: "paused" };
+          break;
+        case "product_change":
+          userUpdate = {
+            ...userUpdate,
+            subscription_product_id:
+              data.newProductId || ev.product_id,
+          };
+          break;
+        case "non_renewing_purchase":
+          userUpdate = {
+            ...userUpdate,
+            subscription_status: "active",
+            subscription_product_id: ev.product_id,
+            subscription_started_at:
+              ev.purchased_at || new Date().toISOString(),
+          };
+          break;
+        default:
+          // ignore unknown — webhook would have also ignored it
+          break;
+      }
+    }
+
+    if (Object.keys(userUpdate).length > 0) {
+      const { error: updateErr } = await supabase
+        .from("users")
+        .update(userUpdate)
+        .eq("id", userId);
+      if (updateErr) {
+        console.error(
+          "[Reconcile] Failed to apply user update:",
+          updateErr.message,
+        );
+        return error(res, "Failed to apply pending subscription", 500);
+      }
+
+      // Also mirror into the audit table so subscription_events stays the
+      // single source of truth for analytics.
+      try {
+        const auditRows = pending.map((ev) => ({
+          event_id: ev.event_id,
+          event_type: ev.event_type,
+          user_id: userId,
+          product_id: ev.product_id,
+          price: ev.price,
+          store: ev.store,
+          period_type: ev.period_type,
+          expiration_at: ev.expires_at,
+          raw_payload: ev.raw_payload,
+        }));
+        await supabase
+          .from("subscription_events")
+          .upsert(auditRows, { onConflict: "event_id" });
+      } catch (auditErr) {
+        console.warn(
+          "[Reconcile] Failed to mirror audit rows:",
+          auditErr.message,
+        );
+      }
+    }
+
+    // Always clear the processed pending rows so we don't re-apply them
+    // on the next call.
+    const pendingIds = pending.map((p) => p.event_id);
+    await supabase
+      .from("pending_subscription_events")
+      .delete()
+      .in("event_id", pendingIds);
+
+    console.log(
+      `✅ [Reconcile] Drained ${pending.length} pending events for user ${userId}`,
+    );
+
+    return success(res, {
+      reconciled: pending.length,
+      applied: userUpdate,
+    });
+  } catch (err) {
+    console.error("❌ reconcile-subscription error:", err.message);
+    return error(res, "Failed to reconcile subscription");
+  }
+});
+
 // GET /api/users/merged-user-list?userId=X - Get merged user_list from all devices sharing the same scale
 // Finds all devices whose user_list contains this userId, then merges all user_lists into one deduplicated array
 router.get("/users/merged-user-list", async (req, res) => {

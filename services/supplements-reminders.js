@@ -25,6 +25,17 @@ function todayKey() {
   return new Date().toISOString().split("T")[0];
 }
 
+function isDeadTokenError(err) {
+  if (!err) return false;
+  const s = String(err).toLowerCase();
+  return (
+    s.includes("devicenotregistered") ||
+    s.includes("device not registered") ||
+    s.includes("invalidcredentials") ||
+    s.includes("not a registered push notification")
+  );
+}
+
 /**
  * Iterate every active supplement-tracking row, compute doses remaining for
  * the current package, and send a push when the user crosses the 7-doses or
@@ -88,16 +99,36 @@ async function processReorderReminders() {
 
     if (!triggered) continue;
 
-    // Look up push token + opt-in flag (re-use the live-updates pref since we
-    // don't have a dedicated supplements toggle yet).
+    // Atomic claim: flip the sent flag from false → true in a single
+    // statement. If two processes (or a stuck cron + a manual trigger)
+    // race, only one wins the update and only one sends the push.
+    const flagCol =
+      triggered === 7 ? "reorder_reminder_7_sent" : "reorder_reminder_3_sent";
+    const { data: claimed, error: claimErr } = await supabase
+      .from("biyo_supplements_tracking")
+      .update({ [flagCol]: true })
+      .eq("user_id", t.user_id)
+      .eq(flagCol, false)
+      .select("user_id")
+      .maybeSingle();
+
+    if (claimErr) {
+      console.warn(
+        "[SupReminders] Claim failed for user",
+        t.user_id,
+        claimErr.message,
+      );
+      continue;
+    }
+    if (!claimed) continue; // another process beat us — skip silently
+
     const { data: user } = await supabase
       .from("users")
-      .select("notification_id, live_updates_notifications")
+      .select("notification_id")
       .eq("id", t.user_id)
       .maybeSingle();
 
-    const optedIn = user?.live_updates_notifications !== false;
-    if (optedIn && user?.notification_id) {
+    if (user?.notification_id) {
       const title =
         triggered === 7
           ? "Your Biyo Longevity is running low"
@@ -107,8 +138,20 @@ async function processReorderReminders() {
           ? `You have ${dosesRemaining} days left. Reorder now so you don't miss a day.`
           : `Reorder Biyo Longevity today to keep your streak going. ${REORDER_URL}`;
       try {
-        await sendPushNotification(user.notification_id, title, body);
-        notified += 1;
+        const result = await sendPushNotification(
+          user.notification_id,
+          title,
+          body,
+        );
+        if (result?.success) {
+          notified += 1;
+        } else if (isDeadTokenError(result?.error)) {
+          // Stop targeting an uninstalled / invalid token.
+          await supabase
+            .from("users")
+            .update({ notification_id: null })
+            .eq("id", t.user_id);
+        }
       } catch (notifErr) {
         console.warn(
           "[SupReminders] Push failed for user",
@@ -117,17 +160,6 @@ async function processReorderReminders() {
         );
       }
     }
-
-    // Flip the flag regardless of whether the push actually delivered — we
-    // don't want to retry on subsequent days for the same threshold.
-    const patch =
-      triggered === 7
-        ? { reorder_reminder_7_sent: true }
-        : { reorder_reminder_3_sent: true };
-    await supabase
-      .from("biyo_supplements_tracking")
-      .update(patch)
-      .eq("user_id", t.user_id);
   }
 
   return { processed: (trackers || []).length, notified };
