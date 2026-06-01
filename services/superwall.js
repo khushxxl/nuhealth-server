@@ -126,10 +126,18 @@ function mapToUserUpdate(summary) {
   // accepts these, so we store them verbatim.
   const status = summary.subscription_status || null;
 
+  // For an actively-renewing subscription Superwall returns
+  // `expiration_date: null` and only populates `next_renewal_date`.
+  // `expiration_date` is set when the sub is cancelled/expiring (the date
+  // access actually ends). Fall back to next_renewal_date so the DB
+  // always has a "valid through" timestamp for gating logic that checks
+  // `subscription_expires_at > now()`.
+  const expiresAt = summary.expiration_date || summary.next_renewal_date || null;
+
   return {
     subscription_status: status,
     subscription_product_id: summary.primary_product_id || null,
-    subscription_expires_at: summary.expiration_date || null,
+    subscription_expires_at: expiresAt,
     subscription_started_at: summary.first_purchase_date || null,
     subscription_store: summary.primary_store || null,
     // `period_type` isn't a top-level field in the summary response; we
