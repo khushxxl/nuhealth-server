@@ -2,12 +2,23 @@ const express = require("express");
 const router = express.Router();
 const { getServiceClient } = require("../services/supabase");
 const { success, error } = require("../utils/apiResponse");
+const {
+  resolveSubscription,
+  mapToUserUpdate,
+  isStale,
+} = require("../services/superwall");
 
 // GET /api/users/me - Fetch authenticated user profile
+//
+// Opportunistically reconciles `subscription_*` columns against Superwall
+// on a 5-min TTL. The Superwall call is bounded by a 3s timeout and
+// fails open (returns stale DB row) so a third-party outage never
+// blocks the request. Pass `?refresh_subscription=true` to bypass the
+// TTL — useful immediately after a known purchase.
 router.get("/users/me", async (req, res) => {
   try {
     const supabase = getServiceClient();
-    const { data, error: dbError } = await supabase
+    const { data: user, error: dbError } = await supabase
       .from("users")
       .select("*")
       .eq("email", req.user.email)
@@ -20,7 +31,60 @@ router.get("/users/me", async (req, res) => {
       return error(res, dbError.message, 500);
     }
 
-    return success(res, data);
+    // Decide whether to reconcile with Superwall. Skip entirely if env
+    // vars aren't configured (deploy hasn't been updated yet) so this
+    // change is safe to deploy before secrets land.
+    const forceRefresh = req.query.refresh_subscription === "true";
+    const shouldSync =
+      !!process.env.SUPERWALL_API_KEY &&
+      (forceRefresh || isStale(user.subscription_synced_at));
+
+    if (shouldSync) {
+      try {
+        const summary = await resolveSubscription(
+          user.id,
+          user.subscription_store,
+        );
+        const patch = mapToUserUpdate(summary);
+
+        // Only write when we actually got fresh data. If Superwall has no
+        // record of the user OR returned null status, leave the existing
+        // row alone — the webhook may have correct state we don't want
+        // to clobber with a 404.
+        if (patch && patch.subscription_status) {
+          const { data: updated, error: updateErr } = await supabase
+            .from("users")
+            .update(patch)
+            .eq("id", user.id)
+            .select()
+            .single();
+
+          if (updateErr) {
+            console.warn(
+              "[users/me] Superwall sync update failed:",
+              updateErr.message,
+            );
+          } else if (updated) {
+            return success(res, updated);
+          }
+        } else if (patch === null) {
+          // Successful HTTP but no usable shape — bump the synced_at
+          // timestamp anyway so we don't hammer Superwall on every /me
+          // for users it doesn't know about (free / never-purchased).
+          await supabase
+            .from("users")
+            .update({ subscription_synced_at: new Date().toISOString() })
+            .eq("id", user.id);
+        }
+      } catch (syncErr) {
+        // Belt-and-suspenders — resolveSubscription already catches its
+        // own errors and returns null, but if anything bubbles up here
+        // (DB layer, serialization), don't fail the /me call.
+        console.warn("[users/me] Superwall sync failed:", syncErr.message);
+      }
+    }
+
+    return success(res, user);
   } catch (err) {
     console.error("❌ GET /api/users/me error:", err.message);
     return error(res, "Failed to fetch user profile");
@@ -369,51 +433,32 @@ router.delete("/users/me", async (req, res) => {
   }
 });
 
-// PUT /api/users/me/subscription - Update user subscription status
-router.put("/users/me/subscription", async (req, res) => {
-  try {
-    const {
-      subscription_status,
-      subscription_product_id,
-      subscription_expires_at,
-      subscription_started_at,
-      subscription_store,
-      subscription_period_type,
-      subscription_cancel_reason,
-    } = req.body;
-
-    if (!subscription_status) {
-      return error(res, "subscription_status is required", 400);
-    }
-
-    const supabase = getServiceClient();
-    const updateData = {
-      subscription_status,
-      ...(subscription_product_id !== undefined && { subscription_product_id }),
-      ...(subscription_expires_at !== undefined && { subscription_expires_at }),
-      ...(subscription_started_at !== undefined && { subscription_started_at }),
-      ...(subscription_store !== undefined && { subscription_store }),
-      ...(subscription_period_type !== undefined && { subscription_period_type }),
-      ...(subscription_cancel_reason !== undefined && { subscription_cancel_reason }),
-    };
-
-    const { data, error: dbError } = await supabase
-      .from("users")
-      .update(updateData)
-      .eq("id", req.user.id)
-      .select()
-      .single();
-
-    if (dbError) {
-      return error(res, dbError.message, 500);
-    }
-
-    return success(res, data);
-  } catch (err) {
-    console.error("❌ PUT /api/users/me/subscription error:", err.message);
-    return error(res, "Failed to update subscription status");
-  }
-});
+// PUT /api/users/me/subscription — REMOVED.
+//
+// Previously this endpoint let the authenticated user set their own
+// subscription_status to any value, which the client used to auto-promote
+// to "active" whenever Superwall's local SDK said ACTIVE. That ended up
+// granting Pro to ~70% of signups (sandbox flickers, cached entitlements,
+// promo campaigns, etc. — none real purchases).
+//
+// Entitlement is now strictly server-driven:
+//   - Superwall webhook (POST /webhooks/superwall) writes status on
+//     verified purchase events.
+//   - Webhooks that arrive before the user row exists land in
+//     `pending_subscription_events`.
+//   - POST /api/users/me/reconcile-subscription drains that table after
+//     the user signs in, attributing real purchases to the correct user.
+//
+// Any client that needs to know Pro status reads `users.subscription_status`
+// (server-set) rather than writing to it. Treat this comment as the
+// historical record; do not re-add a client write endpoint here.
+router.put("/users/me/subscription", (req, res) =>
+  error(
+    res,
+    "Endpoint removed. Subscription status is server-managed via Superwall webhook.",
+    410,
+  ),
+);
 
 /**
  * POST /api/users/me/reconcile-subscription
@@ -436,14 +481,34 @@ router.post("/users/me/reconcile-subscription", async (req, res) => {
     const supabase = getServiceClient();
     if (!supabase) return error(res, "Database not configured", 500);
 
-    // Match pending events that were keyed against this Supabase user id
-    // (the alias the client sets via Superwall.identify). Order oldest →
-    // newest so terminal events (expiration, cancellation) win over earlier
-    // ones if we have both in the queue.
+    // Build the candidate ID set to look up pending events under.
+    //
+    // Pre-auth purchases get webhooks keyed against Superwall's anonymous
+    // identifier — typically Apple's `identifierForVendor` (an UPPERCASE
+    // UUID), which never matches our lowercase Supabase user IDs. The
+    // client passes those extra aliases in the body so we can drain them.
+    //
+    // We compare case-insensitively because Apple emits uppercase but
+    // Supabase emits lowercase, and a few historical rows mix the two.
+    const extra = Array.isArray(req.body?.aliases) ? req.body.aliases : [];
+    const candidates = [userId, ...extra]
+      .filter((v) => typeof v === "string" && v.length > 0)
+      .map((v) => v.toLowerCase());
+
+    // Match pending events keyed against any of our candidate IDs. Order
+    // oldest → newest so terminal events (expiration, cancellation) win
+    // over earlier ones if we have both in the queue.
+    const orClauses = candidates
+      .flatMap((id) => [
+        `alias_id.ilike.${id}`,
+        `original_app_user_id.ilike.${id}`,
+      ])
+      .join(",");
+
     const { data: pending, error: fetchErr } = await supabase
       .from("pending_subscription_events")
       .select("*")
-      .or(`alias_id.eq.${userId},original_app_user_id.eq.${userId}`)
+      .or(orClauses)
       .order("created_at", { ascending: true });
 
     if (fetchErr) {

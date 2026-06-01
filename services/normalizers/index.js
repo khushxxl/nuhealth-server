@@ -37,6 +37,11 @@ const normalizers = {
   oura,
   apple_health_kit: appleHealth,
   apple_health: appleHealth,
+  // Junction unifies Apple Health and Health Connect into the same event
+  // shape, so the apple-health normalizer handles both. Aliased here
+  // rather than copy-pasted so future schema tweaks stay in one place.
+  health_connect: appleHealth,
+  health_connect_v2: appleHealth,
   eight_sleep: eightSleep,
   "8sleep": eightSleep,
 };

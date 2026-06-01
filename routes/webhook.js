@@ -387,6 +387,8 @@ router.post("/junction", async (req, res) => {
       const sourceMap = {
         whoop: "whoop", whoop_v2: "whoop", oura: "oura",
         apple_health_kit: "apple_health", apple_health: "apple_health",
+        // Junction sends Health Connect data under `health_connect`.
+        health_connect: "health_connect", health_connect_v2: "health_connect",
         eight_sleep: "8sleep", "8sleep": "8sleep",
       };
       const source = sourceMap[provider];
@@ -443,6 +445,8 @@ router.post("/junction", async (req, res) => {
       oura: "oura",
       apple_health_kit: "apple_health",
       apple_health: "apple_health",
+      health_connect: "health_connect",
+      health_connect_v2: "health_connect",
       eight_sleep: "8sleep",
       "8sleep": "8sleep",
     };
