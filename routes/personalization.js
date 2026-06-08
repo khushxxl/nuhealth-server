@@ -17,6 +17,28 @@ async function getUserId(supabase, email) {
   return data.id;
 }
 
+// GET /api/personalization/dates - Distinct dates the user has personalization
+// rows for. Used by the calendar modal to mark logged days.
+router.get("/personalization/dates", async (req, res) => {
+  try {
+    const supabase = getServiceClient();
+    const userId = await getUserId(supabase, req.user.email);
+    if (!userId) return success(res, []);
+
+    const { data, error: dbError } = await supabase
+      .from("personalization")
+      .select("date")
+      .eq("userid", userId);
+
+    if (dbError) return error(res, dbError.message, 500);
+    const dates = (data || []).map((row) => row.date).filter(Boolean);
+    return success(res, dates);
+  } catch (err) {
+    console.error("❌ GET /api/personalization/dates error:", err.message);
+    return error(res, "Failed to fetch personalization dates");
+  }
+});
+
 // GET /api/personalization?date=YYYY-MM-DD - Get personalization for a date
 router.get("/personalization", async (req, res) => {
   try {

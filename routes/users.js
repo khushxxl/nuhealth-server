@@ -433,6 +433,116 @@ router.delete("/users/me", async (req, res) => {
   }
 });
 
+// PUT /api/users/me/onboarding-answers - Merge new answers into the existing
+// answer object stored at onboarding_answers[0]. Replaces the client-side
+// "select then merge then update" pattern from profile-questions.tsx.
+// Body: { answers: Record<string, string | string[]> }
+router.put("/users/me/onboarding-answers", async (req, res) => {
+  try {
+    const answers = req.body?.answers;
+    if (!answers || typeof answers !== "object") {
+      return error(res, "answers object is required", 400);
+    }
+
+    const supabase = getServiceClient();
+    const { data: userData, error: lookupError } = await supabase
+      .from("users")
+      .select("id, onboarding_answers")
+      .eq("email", req.user.email)
+      .single();
+
+    if (lookupError || !userData) return error(res, "User not found", 404);
+
+    const existing = userData.onboarding_answers?.[0] || {};
+    const merged = { ...existing, ...answers };
+
+    const { error: updateError } = await supabase
+      .from("users")
+      .update({ onboarding_answers: [merged] })
+      .eq("id", userData.id);
+
+    if (updateError) return error(res, updateError.message, 500);
+    return success(res, { onboarding_answers: [merged] });
+  } catch (err) {
+    console.error("❌ PUT /api/users/me/onboarding-answers error:", err.message);
+    return error(res, "Failed to save answers");
+  }
+});
+
+// PUT /api/users/me/onboarding - Set editable profile fields in one shot.
+// Used by onboarding-questions.tsx (initial), edit-profile.tsx and
+// edit-profile-modal.tsx (later edits).
+// Body: { age, gender, height, weight, user_body_type, onboarding_answers,
+//         name, avatar_url }
+router.put("/users/me/onboarding", async (req, res) => {
+  try {
+    const {
+      age,
+      gender,
+      height,
+      weight,
+      user_body_type,
+      onboarding_answers,
+      name,
+      avatar_url,
+    } = req.body || {};
+
+    const supabase = getServiceClient();
+    const { data: userData, error: lookupError } = await supabase
+      .from("users")
+      .select("id")
+      .eq("email", req.user.email)
+      .single();
+
+    if (lookupError || !userData) return error(res, "User not found", 404);
+
+    const patch = {};
+    if (age !== undefined) patch.age = age;
+    if (gender !== undefined) patch.gender = gender;
+    if (height !== undefined) patch.height = height;
+    if (weight !== undefined) patch.weight = weight;
+    if (user_body_type !== undefined) patch.user_body_type = user_body_type;
+    if (onboarding_answers !== undefined) {
+      patch.onboarding_answers = onboarding_answers;
+    }
+    if (name !== undefined) patch.name = name;
+    if (avatar_url !== undefined) patch.avatar_url = avatar_url;
+
+    const { error: updateError } = await supabase
+      .from("users")
+      .update(patch)
+      .eq("id", userData.id);
+
+    if (updateError) return error(res, updateError.message, 500);
+    return success(res, null, "Profile saved");
+  } catch (err) {
+    console.error("❌ PUT /api/users/me/onboarding error:", err.message);
+    return error(res, "Failed to save profile");
+  }
+});
+
+// POST /api/users/names - Batch name lookup. Body: { userIds: string[] }
+// Used by the multi-user scale modals to resolve scale-user IDs (which the
+// authenticated user already has locally via BLE) into display names.
+router.post("/users/names", async (req, res) => {
+  try {
+    const ids = Array.isArray(req.body?.userIds) ? req.body.userIds : null;
+    if (!ids || ids.length === 0) return success(res, []);
+
+    const supabase = getServiceClient();
+    const { data, error: dbError } = await supabase
+      .from("users")
+      .select("id, name, email")
+      .in("id", ids);
+
+    if (dbError) return error(res, dbError.message, 500);
+    return success(res, data || []);
+  } catch (err) {
+    console.error("❌ POST /api/users/names error:", err.message);
+    return error(res, "Failed to fetch user names");
+  }
+});
+
 // PUT /api/users/me/subscription — REMOVED.
 //
 // Previously this endpoint let the authenticated user set their own
