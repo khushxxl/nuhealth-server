@@ -199,6 +199,87 @@ router.get("/scale/export", async (req, res) => {
   }
 });
 
+// GET /api/scale/export/ranges?userId=X - Report which export time-ranges
+// actually contain data for this user, so the client only offers ranges that
+// will return rows (instead of letting the user pick an empty range and get a
+// silently-failing export). A range [now - window, now] has data iff the most
+// recent record falls inside that window.
+router.get("/scale/export/ranges", async (req, res) => {
+  try {
+    const supabase = getServiceClient();
+    const { userId } = req.query;
+    if (!userId) return success(res, { availableRanges: [], count: 0 });
+
+    // Newest + oldest record dates + total count in one cheap pass.
+    const { data: newest } = await supabase
+      .from("scale_records")
+      .select("created_at")
+      .eq("scale_user_id", userId)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (!newest) {
+      return success(res, {
+        availableRanges: [],
+        count: 0,
+        earliest: null,
+        latest: null,
+      });
+    }
+
+    const { data: oldest } = await supabase
+      .from("scale_records")
+      .select("created_at")
+      .eq("scale_user_id", userId)
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+
+    const now = new Date();
+    const latest = new Date(newest.created_at);
+
+    // Same window definitions as GET /scale/export, kept in lockstep.
+    const windowStart = (range) => {
+      const d = new Date(now);
+      switch (range) {
+        case "1d":
+          return new Date(now.getTime() - 1 * 24 * 60 * 60 * 1000);
+        case "7d":
+          return new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+        case "1m":
+          d.setMonth(d.getMonth() - 1);
+          return d;
+        case "6m":
+          d.setMonth(d.getMonth() - 6);
+          return d;
+        case "1y":
+          d.setFullYear(d.getFullYear() - 1);
+          return d;
+        default:
+          return null;
+      }
+    };
+
+    const availableRanges = [];
+    for (const range of ["1d", "7d", "1m", "6m", "1y"]) {
+      if (latest >= windowStart(range)) availableRanges.push(range);
+    }
+    // Entire history always has data when at least one record exists.
+    availableRanges.push("all");
+
+    return success(res, {
+      availableRanges,
+      count: availableRanges.length,
+      earliest: oldest?.created_at || newest.created_at,
+      latest: newest.created_at,
+    });
+  } catch (err) {
+    console.error("❌ GET /api/scale/export/ranges error:", err.message);
+    return error(res, "Failed to fetch export ranges");
+  }
+});
+
 // GET /api/scale/records?userId=X&limit=N - Get scale record history
 router.get("/scale/records", async (req, res) => {
   try {
