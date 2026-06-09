@@ -30,6 +30,16 @@ if (SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY) {
   );
 }
 
+// Single accessor for all server-side DB work. Prefer the service-role client
+// (bypasses RLS) and fall back to the anon client only if the service key is
+// missing. After the RLS lockdown migration the anon role is denied on every
+// data table, so every server read/write MUST go through service-role — this
+// is what keeps the scale-ingestion pipeline (saveRecord, getUserProfile,
+// updateGoalSummaries, findDeviceOwner) working post-migration.
+function getDb() {
+  return serviceClient || supabase;
+}
+
 /** Round numeric value to 2 decimal places for consistent storage in scale_records. */
 function roundTo2(val) {
   if (val === null || val === undefined) return val;
@@ -122,6 +132,7 @@ async function saveRecordToSupabase(
   rawLefuBodyData = null,
   mutatedBodyData = null,
 ) {
+  const supabase = getDb();
   if (!supabase) {
     console.log("⚠️  Supabase not configured - skipping database save");
     return { success: false, error: "Supabase not configured" };
@@ -244,6 +255,7 @@ async function saveRecordToSupabase(
  * @returns {Promise<Object>} Result object with user profile data
  */
 async function getUserProfile(userId) {
+  const supabase = getDb();
   if (!supabase) {
     console.log("⚠️  Supabase not configured - skipping user profile fetch");
     return { success: false, error: "Supabase not configured" };
@@ -327,6 +339,7 @@ async function getUserProfile(userId) {
  * @returns {Promise<Object>} Result object with success status
  */
 async function updateGoalSummaries(recordId, summaries) {
+  const supabase = getDb();
   if (!supabase) {
     console.log("⚠️  Supabase not configured - skipping summary update");
     return { success: false, error: "Supabase not configured" };
@@ -357,6 +370,7 @@ async function updateGoalSummaries(recordId, summaries) {
  * @returns {Promise<string|null>} The device owner's user_id, or null
  */
 async function findDeviceOwnerByScaleUserId(scaleUserId) {
+  const supabase = getDb();
   if (!supabase || !scaleUserId) return null;
 
   try {
@@ -385,6 +399,10 @@ module.exports = {
   updateGoalSummaries,
   getUserProfile,
   findDeviceOwnerByScaleUserId,
-  getSupabaseClient: () => supabase,
-  getServiceClient: () => serviceClient || supabase,
+  // Both accessors now return the service-role client (with anon fallback).
+  // getSupabaseClient historically returned the anon client; after the RLS
+  // lockdown the anon role is denied on all data tables, so its callers
+  // (health check, summaryGenerator) must use service-role too.
+  getSupabaseClient: () => getDb(),
+  getServiceClient: () => getDb(),
 };
