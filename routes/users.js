@@ -7,6 +7,7 @@ const {
   mapToUserUpdate,
   isStale,
 } = require("../services/superwall");
+const { recordUserAliases } = require("../services/superwall-aliases");
 
 // GET /api/users/me - Fetch authenticated user profile
 //
@@ -601,6 +602,14 @@ router.post("/users/me/reconcile-subscription", async (req, res) => {
     // We compare case-insensitively because Apple emits uppercase but
     // Supabase emits lowercase, and a few historical rows mix the two.
     const extra = Array.isArray(req.body?.aliases) ? req.body.aliases : [];
+
+    // Persist these alias→user links so the webhook can resolve a future
+    // alias-keyed purchase to this user in real time (instead of orphaning it
+    // in pending_subscription_events). Best-effort; never throws.
+    if (extra.length) {
+      await recordUserAliases(userId, extra);
+    }
+
     const candidates = [userId, ...extra]
       .filter((v) => typeof v === "string" && v.length > 0)
       .map((v) => v.toLowerCase());

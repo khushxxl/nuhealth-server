@@ -124,15 +124,24 @@ function mapToUserUpdate(summary) {
   // Superwall returns lowercase status strings (active/trialing/cancelled/
   // expired/billing_issue/paused). Our isPaidStatus helper already
   // accepts these, so we store them verbatim.
-  const status = summary.subscription_status || null;
+  // Superwall REST returns "trial" for a free trial; normalize to "trialing"
+  // so the DB has one canonical spelling (the webhook writes "trialing" too).
+  const rawStatus = summary.subscription_status || null;
+  const status = rawStatus === "trial" ? "trialing" : rawStatus;
 
-  // For an actively-renewing subscription Superwall returns
-  // `expiration_date: null` and only populates `next_renewal_date`.
-  // `expiration_date` is set when the sub is cancelled/expiring (the date
-  // access actually ends). Fall back to next_renewal_date so the DB
-  // always has a "valid through" timestamp for gating logic that checks
-  // `subscription_expires_at > now()`.
-  const expiresAt = summary.expiration_date || summary.next_renewal_date || null;
+  // "Valid through" timestamp for gating (`subscription_expires_at > now()`).
+  // Superwall can return BOTH `expiration_date` and `next_renewal_date`, and on
+  // a re-subscribe `expiration_date` can be a STALE PAST date (the prior cycle)
+  // while `next_renewal_date` is the real future end. Picking the first non-null
+  // (old behavior) stored the past date and wrongly gated an active user out.
+  // Take the furthest-future of the two so an active/renewing sub keeps its real
+  // end date; falls back to whichever single value exists.
+  const expCandidates = [summary.expiration_date, summary.next_renewal_date]
+    .map((d) => (d ? new Date(d).getTime() : NaN))
+    .filter((n) => Number.isFinite(n));
+  const expiresAt = expCandidates.length
+    ? new Date(Math.max(...expCandidates)).toISOString()
+    : null;
 
   return {
     subscription_status: status,
@@ -160,9 +169,65 @@ function isStale(syncedAt) {
   return Date.now() - last > STALE_AFTER_MS;
 }
 
+/**
+ * Authoritative "is this user actually subscribed?" check against Superwall,
+ * used as a fallback when our DB row says non-pro. Superwall is the payment
+ * authority, so an active subscription there is real even if our DB hasn't
+ * caught up — TestFlight/sandbox testers whose webhook keyed against a
+ * $SuperwallAlias, or the window right after a purchase before the webhook +
+ * /me reconcile land.
+ *
+ * Heals the DB on a confirmed-active hit so subsequent (cached) checks are
+ * fast. No-ops (returns false) when SUPERWALL_API_KEY / app IDs aren't
+ * configured, or on any error/timeout — the caller keeps its DB verdict.
+ *
+ * Optionally pass `aliases` — the client's Superwall identifiers (the
+ * anonymous IDFV / appUserId). Pre-auth purchases (bought before identify()
+ * ran) get recorded by Superwall against that anonymous alias, NOT our
+ * users.id, so a lookup by users.id alone returns "no active sub" for a real
+ * paying user. We try the user's id first, then each alias, and heal the DB
+ * row (keyed by users.id) on the first confirmed-active hit.
+ *
+ * @param {object} supabase - service-role client
+ * @param {string} userId
+ * @param {string[]} [aliases] - extra Superwall identifiers to try
+ * @returns {Promise<boolean>}
+ */
+async function verifyActiveViaSuperwall(supabase, userId, aliases = []) {
+  try {
+    // De-duped candidate list: our user id first (cheapest, most likely for
+    // already-reconciled users), then any client-supplied aliases.
+    const candidates = [...new Set(
+      [userId, ...(Array.isArray(aliases) ? aliases : [])].filter(
+        (v) => typeof v === "string" && v.length > 0,
+      ),
+    )];
+
+    let summary = null;
+    for (const candidate of candidates) {
+      const hit = await resolveSubscription(candidate, null);
+      if (hit?.has_active_subscription) {
+        summary = hit;
+        break;
+      }
+    }
+
+    if (!summary?.has_active_subscription) return false;
+    const patch = mapToUserUpdate(summary);
+    if (patch?.subscription_status && supabase) {
+      await supabase.from("users").update(patch).eq("id", userId);
+    }
+    return true;
+  } catch (err) {
+    console.warn("[Superwall] verifyActiveViaSuperwall failed:", err.message);
+    return false;
+  }
+}
+
 module.exports = {
   resolveSubscription,
   mapToUserUpdate,
   isStale,
   STALE_AFTER_MS,
+  verifyActiveViaSuperwall,
 };

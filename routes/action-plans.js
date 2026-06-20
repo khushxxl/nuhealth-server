@@ -77,7 +77,7 @@ function computeMetricProgress({ baseline, current, target, direction }) {
  */
 router.post("/action-plans/generate", async (req, res) => {
   try {
-    const { goal, answers, timelineWeeks, intensity, useWearables, planTime, timezone } = req.body;
+    const { goal, answers, timelineWeeks, intensity, useWearables, planTime, timezone, swAliases, swActive } = req.body;
     const userId = req.user.id;
 
     console.log("🎯 [ActionPlan] Generate request:", { userId, goal, timelineWeeks, intensity, useWearables, planTime });
@@ -86,11 +86,31 @@ router.post("/action-plans/generate", async (req, res) => {
       return error(res, "goal, timelineWeeks, and intensity are required", 400);
     }
 
+    const supabase = getServiceClient();
+    if (!supabase) return error(res, "Database not configured", 500);
+
     // Action Plans are a Pro-only feature: each generation calls OpenAI, so
     // creating new plans is gated. Pre-existing active plans (and their daily
     // task regeneration) keep working — only NEW plan creation is blocked
     // here. Client should open the paywall on this 402 response.
-    const pro = await isProUser(userId);
+    //
+    // PRIMARY source of truth: the device's Superwall SDK verdict (`swActive`),
+    // forwarded by the client. The SDK reflects the live StoreKit receipt and
+    // is correct even when our DB row lags (sandbox/TestFlight, trial flickers,
+    // unreconciled webhooks, pre-auth purchases never linked to the account) —
+    // which is exactly what was dead-ending real purchasers on "something went
+    // wrong". When the device says ACTIVE, we trust it.
+    //
+    // FALLBACK (no/false swActive — e.g. an older client build): the DB check,
+    // which itself falls back to a live Superwall REST lookup across the user's
+    // id + aliases (and heals the DB on a hit).
+    let pro = swActive === true;
+    if (!pro) {
+      const aliases = Array.isArray(swAliases)
+        ? swAliases.filter((a) => typeof a === "string" && a.length > 0)
+        : [];
+      pro = await isProUser(userId, aliases);
+    }
     if (!pro) {
       console.log(
         `🔒 [ActionPlan] Generate blocked for non-pro user ${userId}`,
@@ -101,9 +121,6 @@ router.post("/action-plans/generate", async (req, res) => {
         402,
       );
     }
-
-    const supabase = getServiceClient();
-    if (!supabase) return error(res, "Database not configured", 500);
 
     // Deactivate any existing active plan + remove its schedule
     const { data: existingPlan } = await supabase

@@ -12,7 +12,7 @@
 
 const { OPENAI_API_KEY } = require("../config/constants");
 const { getServiceClient } = require("../services/supabase");
-const { isStatusPro } = require("../services/live-updates");
+const { isProUser } = require("../services/live-updates");
 
 // Metrics we auto-generate RAI for (subset of all body_param_keys; the high-signal ones)
 const AUTO_RAI_METRICS = [
@@ -95,28 +95,27 @@ async function generateAutoRAIForRecord({
   const supabase = getServiceClient();
   if (!supabase) return { success: false, reason: "Supabase not configured" };
 
-  // 1. Pro check — expiration-aware so a lapsed-but-not-yet-webhooked
-  // subscription correctly gates out of the OpenAI-spending path.
+  // 1. Pro check. Use isProUser (not bare isStatusPro): it checks the DB and,
+  // when that says non-pro, falls back to a live Superwall-REST lookup by
+  // users.id (and heals the DB). This keeps auto-RAI consistent with the
+  // live-updates gate and prevents a real subscriber whose DB row lags
+  // (just-purchased, unreconciled webhook) from silently getting no RAI.
+  const isPro = await isProUser(userId);
+  if (!isPro) {
+    console.log(`[AutoRAI] User ${userId} is not Pro, skipping auto RAI generation`);
+    return { success: false, reason: "Not pro" };
+  }
+
+  // Fetch the row for downstream RAI context (name/onboarding answers).
   const { data: user } = await supabase
     .from("users")
-    .select(
-      "name, email, subscription_status, subscription_expires_at, onboarding_answers",
-    )
+    .select("name, email, onboarding_answers")
     .eq("id", userId)
     .maybeSingle();
 
   if (!user) {
     console.log("[AutoRAI] User not found, skipping");
     return { success: false, reason: "User not found" };
-  }
-
-  const isPro = isStatusPro(
-    user.subscription_status,
-    user.subscription_expires_at,
-  );
-  if (!isPro) {
-    console.log(`[AutoRAI] User ${userId} is not Pro, skipping auto RAI generation`);
-    return { success: false, reason: "Not pro" };
   }
 
   // 2. Fetch user goals + latest check-in for context (best-effort)

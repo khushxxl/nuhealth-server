@@ -1,9 +1,14 @@
 const { getServiceClient } = require("./supabase");
 const healthMetrics = require("./health-metrics");
+const { verifyActiveViaSuperwall } = require("./superwall");
 
 // ─── Pro subscription check (cached briefly) ─────────────────────────────────
 
-const PRO_STATUSES = new Set(["active", "trialing"]);
+// Pro-tier status strings. Note both trial spellings: the Superwall WEBHOOK
+// writes "trialing" (periodType TRIAL), while the Superwall REST
+// subscription-summary returns "trial" — both mean an active free trial and
+// must gate as Pro.
+const PRO_STATUSES = new Set(["active", "trialing", "trial"]);
 const proCache = new Map(); // userId -> { isPro, cacheExpiresAt }
 const PRO_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
@@ -24,9 +29,16 @@ function isStatusPro(status, expiresAtIso) {
   return expMs > Date.now();
 }
 
-async function isProUser(userId) {
+async function isProUser(userId, aliases = []) {
+  const hasAliases = Array.isArray(aliases) && aliases.length > 0;
   const cached = proCache.get(userId);
-  if (cached && cached.cacheExpiresAt > Date.now()) return cached.isPro;
+  if (cached && cached.cacheExpiresAt > Date.now()) {
+    // A positive verdict is always safe to serve from cache. A *negative*
+    // verdict is only trusted when the caller has no new aliases to try —
+    // otherwise we'd skip the Superwall-by-alias fallback that exists
+    // specifically to rescue pre-auth purchasers (see verifyActiveViaSuperwall).
+    if (cached.isPro || !hasAliases) return cached.isPro;
+  }
 
   const supabase = getServiceClient();
   if (!supabase) return false;
@@ -46,10 +58,19 @@ async function isProUser(userId) {
       return false;
     }
 
-    const isPro = isStatusPro(
+    let isPro = isStatusPro(
       data.subscription_status,
       data.subscription_expires_at,
     );
+
+    // DB says non-pro — before trusting that, verify against Superwall (the
+    // payment authority). Catches real subscribers whose DB row lags
+    // (TestFlight/sandbox testers, just-purchased users). On a confirmed hit
+    // this also heals the DB. Centralized here so EVERY pro gate that goes
+    // through isProUser (action plans, live updates, …) gets the fallback.
+    if (!isPro) {
+      isPro = await verifyActiveViaSuperwall(supabase, userId, aliases);
+    }
 
     // Cap the cache so it never outlives the subscription itself. If the
     // user expires in 90s, cache for 90s — not the full 5 min — so they

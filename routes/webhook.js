@@ -2,6 +2,7 @@ const express = require("express");
 const router = express.Router();
 const { getServiceClient } = require("../services/supabase");
 const { notify: slackNotify } = require("../services/slack");
+const { findUserIdByAliases } = require("../services/superwall-aliases");
 
 // Maps Superwall event types → (slack type, human title). Only the lifecycle
 // events worth waking up for. Renewal we skip — it'd be hundreds per day.
@@ -69,6 +70,11 @@ router.post("/superwall", async (req, res) => {
     if (appUserId.startsWith("$SuperwallAlias:")) {
       appUserId = appUserId.replace("$SuperwallAlias:", "");
     }
+
+    // The user this event ultimately applies to. Defaults to appUserId (the
+    // common case: a post-identify webhook keyed against our users.id) but may
+    // be re-resolved via the alias→user map below for pre-auth purchases.
+    let resolvedId = appUserId;
 
     // Determine subscription state based on event type
     let subscriptionUpdate = {};
@@ -181,14 +187,36 @@ router.post("/superwall", async (req, res) => {
 
     // Update the user's subscription state in the database
     if (Object.keys(subscriptionUpdate).length > 0) {
-      // Try to find user by ID directly
+      // Try to find user by ID directly (post-identify webhooks key against
+      // our users.id).
       const { data: user, error: findError } = await supabase
         .from("users")
         .select("id")
         .eq("id", appUserId)
         .maybeSingle();
 
-      if (findError || !user) {
+      if (!findError && user) {
+        resolvedId = user.id;
+      } else {
+        // Pre-auth / never-identified purchase: the event is keyed against the
+        // anonymous IDFV alias. Resolve the owner from the alias→user map we
+        // recorded on reconcile/sign-in, so we apply it in real time instead
+        // of orphaning it.
+        const mappedId = await findUserIdByAliases([
+          appUserId,
+          eventData.originalAppUserId,
+        ]);
+        if (mappedId) {
+          resolvedId = mappedId;
+          console.log(
+            `🔗 [Webhook] Resolved alias ${appUserId} → user ${mappedId} via alias map`,
+          );
+        }
+      }
+
+      const userResolved = (!findError && user) || resolvedId !== appUserId;
+
+      if (!userResolved) {
         console.warn(
           `⚠️ [Webhook] User not found — ID: ${appUserId}, original: ${eventData.originalAppUserId}`,
         );
@@ -232,7 +260,7 @@ router.post("/superwall", async (req, res) => {
       const { error: updateError } = await supabase
         .from("users")
         .update(subscriptionUpdate)
-        .eq("id", appUserId);
+        .eq("id", resolvedId);
 
       if (updateError) {
         console.error(
@@ -241,7 +269,7 @@ router.post("/superwall", async (req, res) => {
         );
       } else {
         console.log(
-          `✅ [Webhook] Updated user ${appUserId} subscription:`,
+          `✅ [Webhook] Updated user ${resolvedId} subscription:`,
           subscriptionUpdate,
         );
 
@@ -253,7 +281,7 @@ router.post("/superwall", async (req, res) => {
             const { data: u } = await supabase
               .from("users")
               .select("email")
-              .eq("id", appUserId)
+              .eq("id", resolvedId)
               .maybeSingle();
             email = u?.email || null;
           } catch {
@@ -272,7 +300,7 @@ router.post("/superwall", async (req, res) => {
               eventData.cancelReason ||
               eventData.expirationReason ||
               undefined,
-            userId: appUserId,
+            userId: resolvedId,
             email,
             details: {
               Product: eventData.productId,
@@ -294,7 +322,7 @@ router.post("/superwall", async (req, res) => {
       await supabase.from("subscription_events").insert({
         event_id: eventData.id,
         event_type: eventType,
-        user_id: appUserId,
+        user_id: resolvedId,
         product_id: eventData.productId,
         price: eventData.price,
         proceeds: eventData.proceeds,
