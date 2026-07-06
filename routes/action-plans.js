@@ -77,10 +77,27 @@ function computeMetricProgress({ baseline, current, target, direction }) {
  */
 router.post("/action-plans/generate", async (req, res) => {
   try {
-    const { goal, answers, timelineWeeks, intensity, useWearables, planTime, timezone, swAliases, swActive } = req.body;
+    const {
+      goal,
+      answers,
+      timelineWeeks,
+      intensity,
+      useWearables,
+      planTime,
+      timezone,
+      swAliases,
+      swActive,
+    } = req.body;
     const userId = req.user.id;
 
-    console.log("🎯 [ActionPlan] Generate request:", { userId, goal, timelineWeeks, intensity, useWearables, planTime });
+    console.log("🎯 [ActionPlan] Generate request:", {
+      userId,
+      goal,
+      timelineWeeks,
+      intensity,
+      useWearables,
+      planTime,
+    });
 
     if (!goal || !timelineWeeks || !intensity) {
       return error(res, "goal, timelineWeeks, and intensity are required", 400);
@@ -139,7 +156,11 @@ router.post("/action-plans/generate", async (req, res) => {
     }
 
     // Determine generation mode
-    const generationMode = useWearables ? "wearable_triggered" : planTime ? "time_based" : "time_based";
+    const generationMode = useWearables
+      ? "wearable_triggered"
+      : planTime
+        ? "time_based"
+        : "time_based";
 
     // Calculate dates
     const startDate = new Date().toISOString().split("T")[0];
@@ -186,25 +207,29 @@ router.post("/action-plans/generate", async (req, res) => {
     // Insert plan
     const { data: plan, error: planErr } = await supabase
       .from("action_plans")
-      .insert([{
-        user_id: userId,
-        goal,
-        title: goal.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()),
-        answers: answers || {},
-        timeline_weeks: timelineWeeks,
-        intensity,
-        status: "active",
-        start_date: startDate,
-        end_date: endDate,
-        use_wearables: !!useWearables,
-        plan_time: planTime || "07:00",
-        generation_mode: generationMode,
-        timezone: timezone || "UTC",
-        baseline_value: baselineValue,
-        target_value: targetValue,
-        tracked_metric_key: trackedMetricKey,
-        target_direction: targetDirection,
-      }])
+      .insert([
+        {
+          user_id: userId,
+          goal,
+          title: goal
+            .replace(/_/g, " ")
+            .replace(/\b\w/g, (c) => c.toUpperCase()),
+          answers: answers || {},
+          timeline_weeks: timelineWeeks,
+          intensity,
+          status: "active",
+          start_date: startDate,
+          end_date: endDate,
+          use_wearables: !!useWearables,
+          plan_time: planTime || "07:00",
+          generation_mode: generationMode,
+          timezone: timezone || "UTC",
+          baseline_value: baselineValue,
+          target_value: targetValue,
+          tracked_metric_key: trackedMetricKey,
+          target_direction: targetDirection,
+        },
+      ])
       .select()
       .single();
 
@@ -213,7 +238,12 @@ router.post("/action-plans/generate", async (req, res) => {
       return error(res, "Failed to save action plan: " + planErr.message, 500);
     }
 
-    console.log("✅ [ActionPlan] Plan created:", plan.id, "mode:", generationMode);
+    console.log(
+      "✅ [ActionPlan] Plan created:",
+      plan.id,
+      "mode:",
+      generationMode,
+    );
 
     // Schedule recurring job for time-based plans
     if (generationMode === "time_based" && planTime) {
@@ -225,7 +255,10 @@ router.post("/action-plans/generate", async (req, res) => {
       const genResult = await generateDailyTasks(userId, plan.id, "initial");
       console.log("✅ [ActionPlan] Day 1 generated:", genResult);
     } catch (genErr) {
-      console.error("⚠️ [ActionPlan] Day 1 generation failed, queueing retry:", genErr.message);
+      console.error(
+        "⚠️ [ActionPlan] Day 1 generation failed, queueing retry:",
+        genErr.message,
+      );
       await queueImmediateGeneration(userId, plan.id, "initial");
     }
 
@@ -267,7 +300,8 @@ router.get("/action-plans/current", async (req, res) => {
     const today = new Date().toISOString().split("T")[0];
     const startMs = new Date(plan.start_date).getTime();
     const todayMs = new Date(today).getTime();
-    const dayNumber = Math.floor((todayMs - startMs) / (1000 * 60 * 60 * 24)) + 1;
+    const dayNumber =
+      Math.floor((todayMs - startMs) / (1000 * 60 * 60 * 24)) + 1;
     const totalDays = plan.timeline_weeks * 7;
     const currentWeek = Math.ceil(dayNumber / 7);
 
@@ -278,7 +312,11 @@ router.get("/action-plans/current", async (req, res) => {
     let progressSource = "time";
     let metricCurrentValue = null;
 
-    if (plan.tracked_metric_key && plan.baseline_value != null && plan.target_value != null) {
+    if (
+      plan.tracked_metric_key &&
+      plan.baseline_value != null &&
+      plan.target_value != null
+    ) {
       const current = await getLatestMetricValue(
         supabase,
         userId,
@@ -316,7 +354,8 @@ router.get("/action-plans/current", async (req, res) => {
     if (!hasTodaysTasks && dayNumber > 1) {
       if (plan.generation_mode === "wearable_triggered") {
         awaitingData = true;
-        awaitingMessage = "Waiting for your sleep data to generate today's plan...";
+        awaitingMessage =
+          "Waiting for your sleep data to generate today's plan...";
       } else if (plan.generation_mode === "time_based") {
         awaitingData = true;
         const timeStr = plan.plan_time?.slice(0, 5) || "07:00";
@@ -412,7 +451,8 @@ router.patch("/action-plans/tasks/:taskId", async (req, res) => {
       .eq("id", task.plan_id)
       .single();
 
-    if (!plan || plan.user_id !== userId) return error(res, "Unauthorized", 403);
+    if (!plan || plan.user_id !== userId)
+      return error(res, "Unauthorized", 403);
 
     const { error: updateErr } = await supabase
       .from("action_plan_tasks")
@@ -439,7 +479,10 @@ router.patch("/action-plans/tasks/:taskId", async (req, res) => {
           await liveUpdates.tasksCompleted(userId, todaysTasks.length);
         }
       } catch (err) {
-        console.warn("[ActionPlan] Completion live update failed:", err.message);
+        console.warn(
+          "[ActionPlan] Completion live update failed:",
+          err.message,
+        );
       }
     }
 

@@ -17,28 +17,28 @@ const REMINDER_INTERVAL_DAYS = 4;
 // rate; every push deep-links straight to the Biyo+ paywall.
 const PAYWALL_MESSAGES = [
   {
-    title: "Have you tried RAI?",
-    body: "Your personal AI health coach is inside Biyo+. Open to meet it.",
+    title: "Meet RAI, your AI health coach",
+    body: "Ask anything about your body, anytime. It's inside Biyo+.",
   },
   {
-    title: "Ready to hit your goals?",
-    body: "Start your Action Plan today with Biyo+.",
+    title: "You scanned. Now what?",
+    body: "Biyo+ turns your numbers into a personalized Action Plan.",
   },
   {
-    title: "Want to really understand your body?",
-    body: "View your trends with Biyo+.",
+    title: "See your trends, not just today",
+    body: "Watch muscle, fat and water actually move over time with Biyo+.",
   },
   {
-    title: "Personal trainer too expensive?",
-    body: "Personal trainer or nutrition coaching too expensive? We've got you covered with Biyo+.",
+    title: "A coach for less than a coffee a week",
+    body: "AI coaching and plans for a fraction of a personal trainer. That's Biyo+.",
   },
   {
-    title: "Are your gym gains still not visible?",
-    body: "Find out why here — open Biyo+.",
+    title: "Your gains aren't showing up?",
+    body: "Biyo+ shows you exactly why, and what to change.",
   },
   {
-    title: "Your body messaged.",
-    body: "It asked: 'Do you still love me?' Tap to open Biyo+.",
+    title: "Unlock your full body breakdown",
+    body: "Every metric, your trends and AI insights, all in Biyo+.",
   },
 ];
 

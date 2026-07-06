@@ -3,9 +3,14 @@ const router = express.Router();
 const { OPENAI_API_KEY } = require("../config/constants");
 const { getServiceClient } = require("../services/supabase");
 const { success, error } = require("../utils/apiResponse");
+const { alertAiFailure } = require("../services/slack");
 const {
   buildUserHealthSnapshot,
 } = require("../services/user-health-snapshot");
+const {
+  TROUBLESHOOTING_GUIDE,
+  TROUBLESHOOTING_INSTRUCTION,
+} = require("../constants/troubleshooting-guide");
 
 // ─── Prompt Cache (refreshes every 60s) ───────────────────────────────────────
 
@@ -63,7 +68,22 @@ async function callOpenAI(messages, { model = "gpt-4o", temperature = 0.7, maxTo
   });
 
   if (!response.ok) {
-    throw new Error(`OpenAI API error: ${response.status}`);
+    // Read the error body so we can alert with the real reason (e.g. quota).
+    let errorBody = null;
+    try {
+      errorBody = await response.json();
+    } catch {
+      // non-JSON error body — alert with just the status
+    }
+    // Fire a throttled Slack alert to the reports channel so we hear about
+    // OpenAI outages (quota, rate limits, key issues) instead of only via users.
+    alertAiFailure({
+      feature: "ai.callOpenAI",
+      status: response.status,
+      errorBody,
+    }).catch(() => {});
+    const code = errorBody?.error?.code ? ` (${errorBody.error.code})` : "";
+    throw new Error(`OpenAI API error: ${response.status}${code}`);
   }
 
   const data = await response.json();
@@ -107,9 +127,12 @@ router.post("/ai/chat", async (req, res) => {
       console.warn("[AI/chat] snapshot build failed:", snapErr.message);
     }
 
+    // Append the device troubleshooting knowledge base so the user can ask
+    // setup/connectivity/scan questions in chat. The instruction constrains the
+    // model to answer those STRICTLY from the guide (no invented steps).
     const systemMessage = {
       role: "system",
-      content: `${prompt.system_prompt}\n\n${snapshot.text}`,
+      content: `${prompt.system_prompt}\n\n${snapshot.text}\n\n${TROUBLESHOOTING_INSTRUCTION}\n${TROUBLESHOOTING_GUIDE}`,
     };
 
     const result = await callOpenAI([systemMessage, ...conversation], {

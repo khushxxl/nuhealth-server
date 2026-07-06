@@ -40,6 +40,7 @@ const EVENT_CATEGORY = {
   scale_sync_failed: "reports",
   server_heartbeat: "reports",
   server_unhealthy: "reports",
+  ai_service_failed: "reports",
 };
 
 const ICONS = {
@@ -54,6 +55,7 @@ const ICONS = {
   subscription_paused: "⏸️",
   server_heartbeat: "💓",
   server_unhealthy: "🔴",
+  ai_service_failed: "🤖",
   generic: "ℹ️",
 };
 
@@ -153,4 +155,52 @@ async function notify({ type, title, reason, userId, email, details }) {
   }
 }
 
-module.exports = { notify };
+// ─── AI-failure alerting (throttled) ──────────────────────────────────────────
+// An OpenAI outage (e.g. 429 insufficient_quota) fails on EVERY request, so we
+// throttle by error code: at most one Slack alert per code per cooldown window,
+// per server instance. Prevents hundreds of duplicate pings during an outage.
+const AI_ALERT_COOLDOWN_MS = 15 * 60 * 1000;
+const lastAiAlertAt = {};
+
+/**
+ * Post a throttled alert to the reports channel when an OpenAI/AI call fails.
+ * Fire-and-forget; never throws.
+ *
+ * @param {object} args
+ * @param {string} args.feature   - which AI feature failed (e.g. "rai-chat")
+ * @param {number} args.status    - HTTP status from OpenAI
+ * @param {object} [args.errorBody] - parsed OpenAI error JSON, if any
+ */
+async function alertAiFailure({ feature, status, errorBody } = {}) {
+  try {
+    const code = errorBody?.error?.code || `http_${status}`;
+    const now = Date.now();
+    if (lastAiAlertAt[code] && now - lastAiAlertAt[code] < AI_ALERT_COOLDOWN_MS) {
+      return; // already alerted for this failure recently
+    }
+    lastAiAlertAt[code] = now;
+
+    const isQuota = code === "insufficient_quota" || status === 429;
+    await notify({
+      type: "ai_service_failed",
+      title: isQuota
+        ? "AI is down — OpenAI quota exceeded"
+        : "AI service failing (OpenAI)",
+      reason: errorBody?.error?.message || `OpenAI returned HTTP ${status}`,
+      details: {
+        Status: status,
+        Code: code,
+        Type: errorBody?.error?.type,
+        Feature: feature,
+        Impact: "RAI chat, metric insights, action/daily plans",
+        Fix: isQuota
+          ? "Top up / raise the limit at platform.openai.com → Billing"
+          : undefined,
+      },
+    });
+  } catch {
+    // best-effort; never let alerting break the request path
+  }
+}
+
+module.exports = { notify, alertAiFailure };

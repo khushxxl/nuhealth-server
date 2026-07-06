@@ -35,6 +35,7 @@ const {
 const { initPaywallReminders } = require("./services/paywall-reminders");
 const { initSlackHeartbeat } = require("./services/slack-heartbeat");
 const slackCommandsRoutes = require("./routes/slack-commands");
+const internalRoutes = require("./routes/internal");
 const { shutdown: posthogShutdown } = require("./services/posthog-server");
 const { getSupabaseClient } = require("./services/supabase");
 const { OPENAI_API_KEY } = require("./config/constants");
@@ -339,6 +340,9 @@ app.post("/lefu/wifi/torre/config", (req, res) => {
 // --- Webhook routes (no auth — server-to-server) ---
 app.use("/webhooks", webhookRoutes);
 app.use("/slack", slackCommandsRoutes);
+
+// --- Internal/admin routes (guarded by x-admin-secret, not JWT) ---
+app.use("/internal", internalRoutes);
 
 // --- Frontend API routes (JWT-authenticated) ---
 app.use("/api", authMiddleware);

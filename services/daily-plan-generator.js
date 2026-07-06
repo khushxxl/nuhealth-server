@@ -1,6 +1,7 @@
 const { OPENAI_API_KEY } = require("../config/constants");
 const { getServiceClient } = require("./supabase");
 const { sendPushNotification } = require("./notification");
+const { alertAiFailure } = require("./slack");
 const healthMetrics = require("./health-metrics");
 
 // ─── Prompt Cache ─────────────────────────────────────────────────────────────
@@ -49,7 +50,21 @@ async function callOpenAI(messages, { model = "gpt-4o", temperature = 0.7, maxTo
     body: JSON.stringify(body),
   });
 
-  if (!response.ok) throw new Error(`OpenAI API error: ${response.status}`);
+  if (!response.ok) {
+    let errorBody = null;
+    try {
+      errorBody = await response.json();
+    } catch {
+      // non-JSON error body
+    }
+    alertAiFailure({
+      feature: "daily-plan-generator",
+      status: response.status,
+      errorBody,
+    }).catch(() => {});
+    const code = errorBody?.error?.code ? ` (${errorBody.error.code})` : "";
+    throw new Error(`OpenAI API error: ${response.status}${code}`);
+  }
   const data = await response.json();
   let content = data.choices[0].message.content.trim();
   content = content.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "");
