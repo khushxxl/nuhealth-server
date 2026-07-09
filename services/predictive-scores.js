@@ -96,7 +96,11 @@ async function computeAndStore(userId, { supabase, todayDate } = {}) {
   if (!inputs) return { userId, computed: false, reason: "no-inputs" };
 
   const { today, historyRows, profile } = inputs;
-  const date = isoDay(todayDate || today.reading_date || new Date());
+  // Date the score by the COMPUTE day, not the last reading — the score
+  // reflects the user's current state computed today (from whatever data they
+  // have), and users scan sparsely. Filing it under an old scan date would hide
+  // it from getInsights' recent-window lookup and break the daily trend.
+  const date = isoDay(todayDate || new Date());
 
   // Five daily scores first so Lifestyle can read them back.
   const daily = {};
