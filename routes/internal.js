@@ -3,6 +3,7 @@ const router = express.Router();
 const { success, error } = require("../utils/apiResponse");
 const { processPaywallReminders } = require("../services/paywall-reminders");
 const { reconcileAll } = require("../services/subscription-reconcile");
+const { computeAllEligible } = require("../services/predictive-scores");
 const { getServiceClient } = require("../services/supabase");
 
 // Internal/admin endpoints. Mounted BEFORE the JWT authMiddleware, so they are
@@ -53,6 +54,23 @@ router.post("/subscriptions/reconcile", async (req, res) => {
   } catch (err) {
     console.error("[Internal] subscription reconcile failed:", err.message);
     return error(res, "Reconcile failed", 500);
+  }
+});
+
+/**
+ * POST /internal/insights/compute
+ * Runs the predictive-score sweep on demand (same as the daily cron): every
+ * eligible user (Pro + >= 12 scan-days) has their six scores recomputed and
+ * persisted. Safe to call anytime.
+ */
+router.post("/insights/compute", async (req, res) => {
+  if (!requireAdminSecret(req, res)) return;
+  try {
+    const summary = await computeAllEligible();
+    return success(res, summary, "Predictive score sweep complete");
+  } catch (err) {
+    console.error("[Internal] insights compute failed:", err.message);
+    return error(res, "Compute failed", 500);
   }
 });
 

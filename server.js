@@ -36,6 +36,10 @@ const { initPaywallReminders } = require("./services/paywall-reminders");
 const {
   initSubscriptionReconcile,
 } = require("./services/subscription-reconcile-cron");
+const {
+  initPredictiveScores,
+} = require("./services/predictive-scores-cron");
+const insightsRoutes = require("./routes/insights");
 const { initSlackHeartbeat } = require("./services/slack-heartbeat");
 const slackCommandsRoutes = require("./routes/slack-commands");
 const internalRoutes = require("./routes/internal");
@@ -363,6 +367,7 @@ app.use("/api", actionPlanRoutes);
 app.use("/api", biyoSupplementsRoutes);
 app.use("/api", liveUpdatesRoutes);
 app.use("/api", eventsRoutes);
+app.use("/api", insightsRoutes);
 
 // Wi-Fi Provisioning: Device registration endpoint during Wi-Fi setup
 // This endpoint is called during the scale's Wi-Fi provisioning step
@@ -490,6 +495,7 @@ app.listen(PORT, "0.0.0.0", () => {
     initSupplementsReminders();
     initPaywallReminders();
     initSubscriptionReconcile();
+    initPredictiveScores();
     initSlackHeartbeat();
   } else {
     console.log("⚠️  REDIS_URL not set — daily plan scheduler disabled");
