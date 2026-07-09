@@ -16,7 +16,8 @@ const {
  */
 router.get("/insights", async (req, res) => {
   try {
-    const data = await getInsights(req.user.id);
+    const withMetrics = req.query.metrics === "1";
+    const data = await getInsights(req.user.id, { withMetrics });
     return success(res, data, "Insights");
   } catch (err) {
     console.error("[Insights] failed:", err.message);

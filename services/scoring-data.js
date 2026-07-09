@@ -95,7 +95,7 @@ async function getScanCount(supabase, userId) {
  * Build { today, historyRows, profile } for the engine. Returns null when the
  * user has no usable history.
  */
-async function buildScoringInputs(supabase, userId, { windowDays = 120 } = {}) {
+async function buildScoringInputs(supabase, userId, { windowDays = 120, asOf = null } = {}) {
   const { data: u } = await supabase
     .from("users")
     .select("age, gender, height, weight, user_body_type")
@@ -111,7 +111,11 @@ async function buildScoringInputs(supabase, userId, { windowDays = 120 } = {}) {
     body_type: u.user_body_type ?? null,
   };
 
-  const cutoff = new Date();
+  // `asOf` (YYYY-MM-DD) caps the window at that day, so we can compute a past
+  // day's score from only the data available then (used to backfill the trend).
+  const end = asOf ? new Date(`${asOf}T23:59:59.999Z`) : new Date();
+  const endIso = end.toISOString();
+  const cutoff = new Date(end);
   cutoff.setDate(cutoff.getDate() - windowDays);
   const cutoffIso = cutoff.toISOString();
 
@@ -121,6 +125,7 @@ async function buildScoringInputs(supabase, userId, { windowDays = 120 } = {}) {
     .select("id, created_at")
     .eq("scale_user_id", userId)
     .gte("created_at", cutoffIso)
+    .lte("created_at", endIso)
     .order("created_at", { ascending: true });
 
   const dayScale = {};
@@ -156,7 +161,8 @@ async function buildScoringInputs(supabase, userId, { windowDays = 120 } = {}) {
     .select("metric_key, value_num, recorded_at, source")
     .eq("user_id", userId)
     .in("metric_key", WEARABLE_METRIC_KEYS)
-    .gte("recorded_at", cutoffIso);
+    .gte("recorded_at", cutoffIso)
+    .lte("recorded_at", endIso);
 
   const bestByDay = {}; // date → metric_key → { value, rank }
   const sourcesByDay = {}; // date → source → count

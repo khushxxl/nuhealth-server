@@ -90,9 +90,9 @@ async function readScoresHistory(sb, userId, uptoDate, days) {
 /**
  * Compute and persist the six scores for one user (idempotent per day — upserts).
  */
-async function computeAndStore(userId, { supabase, todayDate } = {}) {
+async function computeAndStore(userId, { supabase, todayDate, asOf } = {}) {
   const sb = supabase || getServiceClient();
-  const inputs = await buildScoringInputs(sb, userId);
+  const inputs = await buildScoringInputs(sb, userId, { asOf: asOf ?? todayDate ?? null });
   if (!inputs) return { userId, computed: false, reason: "no-inputs" };
 
   const { today, historyRows, profile } = inputs;
@@ -158,7 +158,19 @@ async function computeAllEligible({ supabase } = {}) {
  * Read model for the app: eligibility + the latest score per type with a
  * 7-day trend and the pillar breakdown.
  */
-async function getInsights(userId, { supabase } = {}) {
+// Raw current values surfaced to the Deep-dive KPI/metric tiles. Null means the
+// metric isn't available for this user (e.g. no HRV/VO2max ingested) → the
+// client blurs that tile instead of faking a number.
+const METRIC_SNAPSHOT_KEYS = [
+  "resting_heart_rate_bpm", "hrv_rmssd_ms", "sleep_rhr_bpm", "spo2_pct",
+  "respiratory_rate_brpm", "sleep_duration_min", "sleep_efficiency_pct",
+  "sleep_score_0_100", "readiness_score_0_100", "steps",
+  "weight_kg", "fat_ratio_pct", "fat_mass_kg", "muscle_rate_pct",
+  "skeletal_muscle_mass_kg", "visceral_fat", "trunk_fat_ratio_pct",
+  "body_age_years", "recommended_calorie_intake",
+];
+
+async function getInsights(userId, { supabase, withMetrics = false } = {}) {
   const sb = supabase || getServiceClient();
   const scanCount = await getScanCount(sb, userId);
   const elig = await checkEligibility(userId, { supabase: sb, scanCount });
@@ -191,7 +203,16 @@ async function getInsights(userId, { supabase } = {}) {
     scores[t].trend = (trends[t] || []).slice(0, 7).reverse();
   }
 
-  return { ...elig, scores };
+  // Opt-in raw metric snapshot for the Deep-dive tiles (null = unavailable).
+  let metrics;
+  if (withMetrics) {
+    const inputs = await buildScoringInputs(sb, userId);
+    const today = inputs?.today || {};
+    metrics = {};
+    for (const k of METRIC_SNAPSHOT_KEYS) metrics[k] = today[k] ?? null;
+  }
+
+  return { ...elig, scores, ...(metrics ? { metrics } : {}) };
 }
 
 module.exports = {
