@@ -16,7 +16,12 @@
  *   hr_recovery, high-HR-zone minutes, activity scores, muscle_quality_index.
  */
 
-const MIN_SCANS = 12;
+// Bare minimum for the Predictive page to unlock: a single BIA scan already
+// yields a real (low-confidence) Weight / Body-composition / Body-Age score.
+// Each score then matures on its own schedule (per-card baseline_status), and
+// Lifestyle stays "building" until it has 28 days. See the scoring master doc's
+// "minimum scans before results show" table.
+const MIN_SCANS = 1;
 
 // engine field → scale_measurements.body_param_key
 const SCALE_MAP = {
