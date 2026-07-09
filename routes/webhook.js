@@ -3,6 +3,7 @@ const router = express.Router();
 const { getServiceClient } = require("../services/supabase");
 const { notify: slackNotify } = require("../services/slack");
 const { findUserIdByAliases } = require("../services/superwall-aliases");
+const { reconcileUser } = require("../services/subscription-reconcile");
 
 // Maps Superwall event types → (slack type, human title). Only the lifecycle
 // events worth waking up for. Renewal we skip — it'd be hundreds per day.
@@ -257,63 +258,61 @@ router.post("/superwall", async (req, res) => {
         return;
       }
 
-      const { error: updateError } = await supabase
-        .from("users")
-        .update(subscriptionUpdate)
-        .eq("id", resolvedId);
-
-      if (updateError) {
-        console.error(
-          "❌ [Webhook] Failed to update subscription:",
-          updateError,
-        );
-      } else {
+      // Superwall API is the source of truth for subscription_status. Rather
+      // than writing the event payload, reconcile this user straight from the
+      // API — confirming against the user id AND the event's alias ids so a
+      // purchase living under an unlinked $SuperwallAlias is still caught.
+      try {
+        const result = await reconcileUser(supabase, resolvedId, {
+          extraIds: [appUserId, eventData.originalAppUserId],
+        });
         console.log(
-          `✅ [Webhook] Updated user ${resolvedId} subscription:`,
-          subscriptionUpdate,
+          `✅ [Webhook] Reconciled user ${resolvedId} from API`,
+          result.changed ? result.patch : "(no change)",
+          `pro=${result.pro}`,
         );
+      } catch (recErr) {
+        console.error("❌ [Webhook] Reconcile failed:", recErr.message);
+      }
 
-        // Fire-and-forget Slack ping for high-signal lifecycle events.
-        const slackMeta = SLACK_EVENTS[eventType];
-        if (slackMeta) {
-          let email = null;
-          try {
-            const { data: u } = await supabase
-              .from("users")
-              .select("email")
-              .eq("id", resolvedId)
-              .maybeSingle();
-            email = u?.email || null;
-          } catch {
-            // best-effort
-          }
-
-          const priceStr =
-            typeof eventData.price === "number"
-              ? `${eventData.currencyCode || "USD"} ${eventData.price}`
-              : null;
-
-          slackNotify({
-            type: slackMeta.type,
-            title: slackMeta.title,
-            reason:
-              eventData.cancelReason ||
-              eventData.expirationReason ||
-              undefined,
-            userId: resolvedId,
-            email,
-            details: {
-              Product: eventData.productId,
-              Store: eventData.store,
-              Period: eventData.periodType,
-              Price: priceStr,
-              Environment: eventData.environment,
-              Expires: eventData.expirationAt
-                ? new Date(eventData.expirationAt).toISOString()
-                : null,
-            },
-          });
+      // Fire-and-forget Slack ping for high-signal lifecycle events.
+      const slackMeta = SLACK_EVENTS[eventType];
+      if (slackMeta) {
+        let email = null;
+        try {
+          const { data: u } = await supabase
+            .from("users")
+            .select("email")
+            .eq("id", resolvedId)
+            .maybeSingle();
+          email = u?.email || null;
+        } catch {
+          // best-effort
         }
+
+        const priceStr =
+          typeof eventData.price === "number"
+            ? `${eventData.currencyCode || "USD"} ${eventData.price}`
+            : null;
+
+        slackNotify({
+          type: slackMeta.type,
+          title: slackMeta.title,
+          reason:
+            eventData.cancelReason || eventData.expirationReason || undefined,
+          userId: resolvedId,
+          email,
+          details: {
+            Product: eventData.productId,
+            Store: eventData.store,
+            Period: eventData.periodType,
+            Price: priceStr,
+            Environment: eventData.environment,
+            Expires: eventData.expirationAt
+              ? new Date(eventData.expirationAt).toISOString()
+              : null,
+          },
+        });
       }
     }
 

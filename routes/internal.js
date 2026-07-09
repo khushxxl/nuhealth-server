@@ -2,6 +2,8 @@ const express = require("express");
 const router = express.Router();
 const { success, error } = require("../utils/apiResponse");
 const { processPaywallReminders } = require("../services/paywall-reminders");
+const { reconcileAll } = require("../services/subscription-reconcile");
+const { getServiceClient } = require("../services/supabase");
 
 // Internal/admin endpoints. Mounted BEFORE the JWT authMiddleware, so they are
 // guarded instead by a shared secret in the `x-admin-secret` header. Set
@@ -34,6 +36,23 @@ router.post("/paywall-reminders/run", async (req, res) => {
   } catch (err) {
     console.error("[Internal] paywall-reminders run failed:", err.message);
     return error(res, "Sweep failed", 500);
+  }
+});
+
+/**
+ * POST /internal/subscriptions/reconcile
+ * Runs the full subscription reconcile sweep on demand (same logic as the
+ * twice-daily cron): every user is checked against the Superwall API and their
+ * subscription_status / expiry corrected. Safe to call anytime.
+ */
+router.post("/subscriptions/reconcile", async (req, res) => {
+  if (!requireAdminSecret(req, res)) return;
+  try {
+    const summary = await reconcileAll(getServiceClient(), { concurrency: 8 });
+    return success(res, summary, "Subscription reconcile complete");
+  } catch (err) {
+    console.error("[Internal] subscription reconcile failed:", err.message);
+    return error(res, "Reconcile failed", 500);
   }
 });
 

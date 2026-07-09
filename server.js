@@ -33,6 +33,9 @@ const {
   initSupplementsReminders,
 } = require("./services/supplements-reminders");
 const { initPaywallReminders } = require("./services/paywall-reminders");
+const {
+  initSubscriptionReconcile,
+} = require("./services/subscription-reconcile-cron");
 const { initSlackHeartbeat } = require("./services/slack-heartbeat");
 const slackCommandsRoutes = require("./routes/slack-commands");
 const internalRoutes = require("./routes/internal");
@@ -486,6 +489,7 @@ app.listen(PORT, "0.0.0.0", () => {
     initPlanQueue();
     initSupplementsReminders();
     initPaywallReminders();
+    initSubscriptionReconcile();
     initSlackHeartbeat();
   } else {
     console.log("⚠️  REDIS_URL not set — daily plan scheduler disabled");
