@@ -215,11 +215,37 @@ async function getInsights(userId, { supabase, withMetrics = false } = {}) {
   return { ...elig, scores, ...(metrics ? { metrics } : {}) };
 }
 
+/**
+ * Per-metric history for a KPI tile's detail view. Reuses buildScoringInputs so
+ * scale AND wearable metrics resolve the same way the scores do (from
+ * scale_measurements + health_metrics), keyed by the engine field name (same as
+ * METRIC_SNAPSHOT_KEYS). Returns the daily points plus simple stats.
+ */
+async function getMetricHistory(userId, key, { supabase, days = 30 } = {}) {
+  const sb = supabase || getServiceClient();
+  const inputs = await buildScoringInputs(sb, userId, { windowDays: days });
+  const rows = inputs?.historyRows || [];
+  const points = rows
+    .map((r) => ({ date: r.date, value: r[key] }))
+    .filter((p) => p.value != null && Number.isFinite(p.value));
+  const vals = points.map((p) => p.value);
+  const stats = vals.length
+    ? {
+        latest: vals[vals.length - 1],
+        min: Math.min(...vals),
+        max: Math.max(...vals),
+        avg: vals.reduce((a, b) => a + b, 0) / vals.length,
+      }
+    : { latest: null, min: null, max: null, avg: null };
+  return { key, points, ...stats };
+}
+
 module.exports = {
   checkEligibility,
   computeAndStore,
   computeAllEligible,
   getInsights,
+  getMetricHistory,
   ALL_TYPES,
   DAILY_TYPES,
 };

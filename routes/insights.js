@@ -5,6 +5,7 @@ const {
   getInsights,
   computeAndStore,
   checkEligibility,
+  getMetricHistory,
 } = require("../services/predictive-scores");
 
 /**
@@ -46,6 +47,24 @@ router.post("/insights/generate", async (req, res) => {
   } catch (err) {
     console.error("[Insights] generate failed:", err.message);
     return error(res, "Failed to generate insights", 500);
+  }
+});
+
+/**
+ * GET /api/insights/metric?key=<snapshotKey>&days=30
+ * History for a single KPI metric (scale or wearable) so the Deep-dive tiles can
+ * tap through to a real trend. Resolves the same way the scores do.
+ */
+router.get("/insights/metric", async (req, res) => {
+  try {
+    const key = String(req.query.key || "");
+    if (!key) return error(res, "Missing metric key", 400);
+    const days = Math.min(Math.max(parseInt(req.query.days, 10) || 30, 7), 180);
+    const data = await getMetricHistory(req.user.id, key, { days });
+    return success(res, data, "Metric history");
+  } catch (err) {
+    console.error("[Insights] metric history failed:", err.message);
+    return error(res, "Failed to load metric history", 500);
   }
 });
 

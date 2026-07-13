@@ -6,10 +6,10 @@
 // Body fat % adjustment by bucket (delta to add to raw BF%)
 // Bucket values must match Supabase: athlete_very_lean | lean | normal | overweight
 const BF_ADJUSTMENT = {
-  athlete_very_lean: -4.5,
-  lean: -3.5,
+  athlete_very_lean: -5,
+  lean: -4,
   normal: 0,
-  overweight: 3.5,
+  overweight: 4,
 };
 
 // Safety bounds for corrected BF%

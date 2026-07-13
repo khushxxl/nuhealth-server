@@ -264,9 +264,15 @@ function applyCorrection(bodyData, heightCm, weightKg, sex, userBodyType) {
   }
 
   const allowedBuckets = ["athlete_very_lean", "lean", "normal", "overweight"];
+  // Normalize both the enum ("athlete_very_lean") and the raw onboarding label
+  // ("Athlete (very lean)") to the same bucket. Stripping parens is what makes
+  // the athlete label resolve instead of silently falling back to "normal".
   const normalized =
     userBodyType && String(userBodyType).trim()
-      ? String(userBodyType).toLowerCase().replace(/\s/g, "_")
+      ? String(userBodyType)
+          .toLowerCase()
+          .replace(/[()]/g, "")
+          .replace(/\s+/g, "_")
       : null;
   const bucket =
     normalized && allowedBuckets.includes(normalized) ? normalized : "normal";
