@@ -49,6 +49,13 @@ const { OPENAI_API_KEY } = require("./config/constants");
 
 const app = express();
 
+// --- Digital Scan (multipart video upload) ---
+// Mounted BEFORE express.text() below, which would otherwise consume the
+// multipart body. Auth is applied here so req.user is available; multer parses
+// the file inside the route.
+const scanRoutes = require("./routes/scan");
+app.use("/api/scan", authMiddleware, scanRoutes);
+
 // Capture raw body as text first, then parse JSON manually
 // This allows us to handle malformed JSON gracefully
 app.use(express.text({ type: "*/*", limit: "10mb" }));
@@ -489,16 +496,31 @@ app.listen(PORT, "0.0.0.0", () => {
     ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
     : `http://0.0.0.0:${PORT}`;
 
-  // Initialize BullMQ plan queue after server is ready
-  if (process.env.REDIS_URL) {
+  // Initialize BullMQ workers/crons after server is ready.
+  //
+  // These share prod Redis + Supabase via .env, so a LOCAL server must NOT run
+  // them (it would become a second worker and double-process production jobs).
+  // Auto-detect the deployed environment via Railway's injected vars so this
+  // needs zero local config. Override either way with WORKERS_ENABLED=true/false.
+  const isDeployed =
+    !!process.env.RAILWAY_ENVIRONMENT || !!process.env.RAILWAY_PUBLIC_DOMAIN;
+  const workersEnabled =
+    process.env.WORKERS_ENABLED === "true" ||
+    (isDeployed && process.env.WORKERS_ENABLED !== "false");
+
+  if (!process.env.REDIS_URL) {
+    console.log("⚠️  REDIS_URL not set — daily plan scheduler disabled");
+  } else if (!workersEnabled) {
+    console.log(
+      "⏸️  Background workers/crons disabled (local mode). Set WORKERS_ENABLED=true to force on.",
+    );
+  } else {
     initPlanQueue();
     initSupplementsReminders();
     initPaywallReminders();
     initSubscriptionReconcile();
     initPredictiveScores();
     initSlackHeartbeat();
-  } else {
-    console.log("⚠️  REDIS_URL not set — daily plan scheduler disabled");
   }
 
   // Flush in-flight PostHog events before the process exits so we don't
